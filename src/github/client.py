@@ -15,7 +15,7 @@ class GitHubClient:
         
         if self.token:
             self.session.headers.update({
-                'Authorization': f'Bearer {self.token}',
+                'Authorization': f'token {self.token}',
                 'Accept': 'application/vnd.github.v3+json'
             })
         else:
