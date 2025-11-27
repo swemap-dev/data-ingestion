@@ -9,7 +9,7 @@ load_dotenv()
 
 class GitHubClient:
     def __init__(self, token: Optional[str] = None):
-        self.token = token or os.getenv('GITHUB_TOKEN')
+        self.token = token or os.getenv('GITHUB_TOKEN') # TODO: OAuth
         self.base_url = 'https://api.github.com'
         self.session = requests.Session()
         

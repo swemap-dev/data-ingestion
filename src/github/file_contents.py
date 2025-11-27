@@ -1,4 +1,6 @@
 import requests
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .client import GitHubClient
@@ -12,7 +14,7 @@ class FileContentsService:
         self.graphql_url = "https://api.github.com/graphql"
 
     def get_recursive_file_contents(
-        self, owner: str, repo: str, ref: Optional[str] = None
+        self, owner: str, repo: str, ref: Optional[str] = None, max_workers: Optional[int] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
         if not ref:
             repo_meta = self.client.get_repository(owner, repo)
@@ -22,10 +24,24 @@ class FileContentsService:
         files_with_shas = self._get_all_files(owner, repo, tree_sha)
 
         result = {}
-        for file_path, blob_sha in files_with_shas.items():
-            file_data = self._get_file_blame(owner, repo, file_path, blob_sha, ref)
-            if file_data:
-                result[file_path] = file_data
+        
+        # Process files in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all file processing tasks
+            future_to_file = {
+                executor.submit(self._get_file_blame, owner, repo, file_path, blob_sha, ref): file_path
+                for file_path, blob_sha in files_with_shas.items()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    file_data = future.result()
+                    if file_data:
+                        result[file_path] = file_data
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {e}")
 
         return result
 
@@ -93,7 +109,8 @@ class FileContentsService:
         # Just add Content-Type, use session's existing Authorization header
         headers = {"Content-Type": "application/json"}
 
-        print(f"POST {self.graphql_url} (GraphQL blame for {file_path})")
+        thread_id = threading.get_ident()
+        print(f"[Thread {thread_id}] POST {self.graphql_url} (GraphQL blame for {file_path})")
 
         try:
             # Use session's existing headers (including Authorization)
@@ -144,7 +161,8 @@ class FileContentsService:
         self, owner: str, repo: str, file_path: str, blob_sha: str, ref: str
     ) -> Optional[List[Dict[str, Any]]]:
         blob_url = f"{self.base_url}/repos/{owner}/{repo}/git/blobs/{blob_sha}"
-        print(f"GET {blob_url}")
+        thread_id = threading.get_ident()
+        print(f"[Thread {thread_id}] GET {blob_url} (file: {file_path})")
 
         try:
             # Get file contents
