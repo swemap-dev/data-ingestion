@@ -1,0 +1,1 @@
+DROP VIEW IF EXISTS module_risk_metrics;
