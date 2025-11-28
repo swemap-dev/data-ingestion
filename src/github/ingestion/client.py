@@ -2,7 +2,7 @@ import os
 import requests
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
-from .repository import RepositoryMetadata
+from ..models import RepositoryMetadata
 
 load_dotenv()
 
