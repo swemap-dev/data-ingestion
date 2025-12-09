@@ -113,6 +113,42 @@ CREATE TABLE file_dependencies (
     raw_import_statement VARCHAR(512)
 );
 
+-- The "Hunk" table now acts purely as a metadata pointer
+CREATE TABLE commit_hunks (
+    id SERIAL PRIMARY KEY,
+    commit_hash TEXT REFERENCES commits(hash) ON DELETE CASCADE,
+    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    engineer_id INTEGER REFERENCES engineers(id) ON DELETE CASCADE,
+    
+    -- The critical metadata: "The code of interest is between lines 20 and 50"
+    line_range int4range NOT NULL, 
+    
+    -- Who lost code? (For ownership calculation)
+    overwritten_engineer_ids INTEGER[], 
+    
+    -- Stats
+    lines_added INTEGER,
+    lines_deleted INTEGER
+);
+
+-- The Ownership Cache (Snapshot)
+-- Running tally that we update after every commit.
+CREATE TABLE file_ownership_metrics (
+    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    engineer_id INTEGER REFERENCES engineers(id) ON DELETE CASCADE,
+    
+    -- The Net Line Count (Current Ownership)
+    -- Logic: If I overwrite 5 of your lines with 5 of mine:
+    -- You: -5, Me: +5
+    lines_owned INTEGER DEFAULT 0,
+    
+    -- The "Influence" Score (Optional for ML)
+    -- How many times has this person touched this file?
+    commit_count INTEGER DEFAULT 0,
+    
+    PRIMARY KEY (file_id, engineer_id)
+);
+
 -- Create Indexes for performance
 CREATE INDEX idx_contributions_module_id
 ON module_contributions(module_id, interaction_type);

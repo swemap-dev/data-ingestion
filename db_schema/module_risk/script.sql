@@ -18,9 +18,9 @@ s_calculation AS (
    SELECT
        module_name,
        (
-           (0.45 * num_designed) +
-           (0.35 * num_wrote) +
-           (0.20 * num_reviewed)
+           (0.50 * num_wrote) +
+           (0.25 * num_designed) +
+           (0.25 * num_reviewed)
        ) / 5.0 AS score_s
    FROM
        contribution_counts
@@ -33,3 +33,11 @@ SELECT
    END AS risk_metric
 FROM
    s_calculation;
+
+-- main contributor (1): has a button to expand the full list:
+-- list of top-5 contributors with >15% ownership
+-- on-call: assigned (not included in the risk score)
+
+-- Design with Blame in mind
+-- Keep track of commits: use line chunks.
+-- Blame has [start_line - end_line]; don't worry about performance for now.
