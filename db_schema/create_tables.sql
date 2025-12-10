@@ -51,6 +51,7 @@ CREATE TABLE files (
     module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
     file_path VARCHAR(512) NOT NULL,
     checksum VARCHAR(255), -- Useful for detecting changes
+    line_count INTEGER,
     ast_summary JSONB      -- Great usage of JSONB for cached analysis
 );
 
@@ -141,6 +142,7 @@ CREATE TABLE file_ownership_metrics (
     -- Logic: If I overwrite 5 of your lines with 5 of mine:
     -- You: -5, Me: +5
     lines_owned INTEGER DEFAULT 0,
+    lines_owned_percentage DOUBLE PRECISION,
     
     -- The "Influence" Score (Optional for ML)
     -- How many times has this person touched this file?
@@ -154,13 +156,3 @@ CREATE INDEX idx_contributions_module_id
 ON module_contributions(module_id, interaction_type);
 
 CREATE INDEX idx_modules_name ON modules(name);
-
-
--- -- Example:
--- INSERT INTO engineers (name, email, team, recs)
--- VALUES (
---     'Alice Dev', 
---     'alice@example.com', 
---     'Backend Infrastructure',
---     '{"preferred_language": "C++", "years_experience": 5, "active_projects": ["repo_reader", "swemap"]}'
--- );
