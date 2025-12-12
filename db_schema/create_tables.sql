@@ -125,7 +125,7 @@ CREATE TABLE commit_hunks (
     line_range int4range NOT NULL, 
     
     -- Who lost code? (For ownership calculation)
-    overwritten_engineer_ids INTEGER[], 
+    overwritten_engineer_id INTEGER, 
     
     -- Stats
     lines_added INTEGER,

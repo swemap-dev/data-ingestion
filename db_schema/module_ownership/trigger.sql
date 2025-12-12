@@ -27,14 +27,11 @@ BEGIN
     -- 2. UPDATE RAW OWNERSHIP COUNTS (Your Original Logic)
     
     -- A. Penalize the "Victims"
-    IF NEW.overwritten_engineer_ids IS NOT NULL THEN
-        FOREACH victim_id IN ARRAY NEW.overwritten_engineer_ids
-        LOOP
-            UPDATE file_ownership_metrics 
-            SET lines_owned = GREATEST(lines_owned - NEW.lines_deleted, 0) -- Safety: Prevent negative ownership
-            WHERE engineer_id = victim_id 
-              AND file_id = NEW.file_id;
-        END LOOP;
+    IF NEW.overwritten_engineer_id IS NOT NULL THEN
+        UPDATE file_ownership_metrics 
+        SET lines_owned = GREATEST(lines_owned - NEW.lines_deleted, 0) -- Safety: Prevent negative ownership
+        WHERE engineer_id = NEW.overwritten_engineer_id 
+          AND file_id = NEW.file_id;
     END IF;
 
     -- B. Reward the "Author"
