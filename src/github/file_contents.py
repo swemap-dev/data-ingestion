@@ -13,6 +13,69 @@ class FileContentsService:
         self.base_url = client.base_url
         self.graphql_url = "https://api.github.com/graphql"
 
+    def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main") -> List[Dict[str, Any]]:
+        """
+        Get rich blame data for a specific file using custom GraphQL query.
+        Returns a list of blame ranges with commit author info and age.
+        """
+        query = """
+        query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!) {
+          repository(owner: $owner, name: $repo) {
+            ref(qualifiedName: $ref) {
+              target {
+                ... on Commit {
+                  blame(path: $path) {
+                    ranges {
+                      commit {
+                        oid
+                        author {
+                          name
+                          email
+                        }
+                      }
+                      startingLine
+                      endingLine
+                      age
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        
+        variables = {"owner": owner, "repo": repo, "ref": ref, "path": file_path}
+
+        # Use session's existing headers including Authorization
+        headers = {"Content-Type": "application/json"}
+        
+        try:
+            response = self.session.post(
+                self.graphql_url, headers=headers, json={"query": query, "variables": variables}
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if "errors" in data:
+                print(f"GraphQL errors: {data['errors']}")
+                return []
+
+            # Inject metadata requested by user
+            try:
+                if 'data' in data and 'repository' in data['data']:
+                    data['data']['repository']['repo_name'] = repo
+                    data['data']['repository']['file_name'] = file_path
+            except Exception as e:
+                print(f"Error injecting metadata: {e}")
+
+            return data
+            
+        except Exception as e:
+            print(f"Error fetching blame: {e}")
+            return []
+
     def get_recursive_file_contents(
         self, owner: str, repo: str, ref: Optional[str] = None, max_workers: Optional[int] = None
     ) -> Dict[str, List[Dict[str, Any]]]:

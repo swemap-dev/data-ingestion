@@ -29,24 +29,7 @@ A data ingestion engine for pulling repository metadata and file contents from v
    GITHUB_TOKEN=your_github_token_here
    ```
 
-## Usage
-
-### GitHub Repository Metadata
-
-```python
-from src.github import GitHubClient
-
-client = GitHubClient()
-repo = client.get_repository('owner', 'repo-name')
-```
-
-### GitHub File Contents
-
-```python
-from src.github import GitHubClient, FileContentsService
-
-client = GitHubClient()
-service = FileContentsService(client)
-contents = service.get_recursive_file_contents('owner', 'repo-name')
-```
+## Run Software
+1. Set up Database: refer to `db_schema/README.md`
+2. Run Ingestion Engine webhook: refer to `oracle/blame/README.md`
 
