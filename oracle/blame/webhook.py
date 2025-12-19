@@ -2,10 +2,14 @@ import os
 import threading
 import queue
 import time
-from flask import Flask, request, jsonify
-from pipeline import process_file_change
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from src.github import GitHubClient, FileContentsService
+from flask import Flask, request, jsonify
+from utils import process_blame_response
+
+from src.github.client import GitHubClient
+from src.github.file_contents import FileContentsService
 import json
 
 client = GitHubClient()
@@ -20,6 +24,7 @@ job_queue = queue.Queue()
 def worker():
     """
     Background worker that consumes jobs from the queue.
+    Hardcoded module ID and Branch for now.
     """
     print("Worker thread started...")
     while True:
@@ -32,9 +37,10 @@ def worker():
             try:
                 print(f"Worker picked up: {file_path} @ {commit_hash}")
                 blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, 'main')
-                print(f"======Blame data:\n {blame_data}======")
-                with open('blame_data.json', 'w') as f:
-                    json.dump(blame_data, f, indent=2)
+                # print(f"======Blame data:\n {blame_data}======")
+                # with open('blame_data.json', 'w') as f:
+                #     json.dump(blame_data, f, indent=2)
+                process_blame_response(1, blame_data, file_path)
             except Exception as e:
                 print(f"Error processing job {item}: {e}")
             finally:

@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 
 from src.github.client import GitHubClient
 from src.github.file_contents import FileContentsService
-from db_schema.oracle.range_cutter import process_blame_response
+from utils import process_blame_response
 
 load_dotenv()
 DB_DSN = os.getenv("DB_DSN")

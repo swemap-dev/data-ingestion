@@ -7,27 +7,26 @@ from psycopg.types.range import Range as NumericRange
 # Database Connection String
 dotenv.load_dotenv()
 DB_DSN = os.getenv("DB_DSN")
-# DB_DSN = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:5432/{DB_NAME}"
 
-def process_blame_response(module_id, json_data, file_path, DB_DSN):
+def process_blame_response(module_id, json_data, file_path):
     """
-    Ingests the GraphQL response [cite: 2-21] and updates the DB.
+    Ingests the GraphQL response and updates the DB.
     """
     conn = psycopg.connect(DB_DSN)
     cur = conn.cursor()
     
     try:
         # 1. Parse GraphQL Data
-        # Navigating the nested structure from [cite: 3-17]
+        # Navigating the nested structure
         repo_data = json_data['data']['repository']
         target = repo_data['ref']['target']
         
-        # Ensure we are looking at a Commit object [cite: 5]
+        # Ensure we are looking at a Commit object
         if 'blame' not in target:
             print("Target is not a commit with blame history.")
             return
 
-        blame_ranges = target['blame']['ranges'] # [cite: 7]
+        blame_ranges = target['blame']['ranges']
         
         # 2. Get or Create File/Engineer mappings
         file_id = get_or_create_file(cur, module_id, file_path)
@@ -40,11 +39,11 @@ def process_blame_response(module_id, json_data, file_path, DB_DSN):
         total_lines = 0
         
         for entry in blame_ranges:
-            # Extract Engineer Info [cite: 9, 10]
+            # Extract Engineer Info
             author_name = entry['commit']['author']['name']
             email = entry['commit']['author']['email'] # Assuming available in query
             engineer_id = get_or_create_engineer(cur, author_name, email)
-            # Extract Range Info [cite: 13, 14]
+            # Extract Range Info
             start = entry['startingLine']
             end = entry['endingLine'] 
             # Note: GraphQL blame is 1-based inclusive.
@@ -64,7 +63,7 @@ def process_blame_response(module_id, json_data, file_path, DB_DSN):
         # 4. Update File Metadata
         cur.execute("UPDATE files SET line_count = %s WHERE id = %s", (total_lines, file_id))
 
-        # 5. Aggregation Pipeline [cite: 144, 147]
+        # 5. Aggregation Pipeline
         # Calculate ownership metrics
         recalculate_metrics(cur, file_id, total_lines)
         
@@ -78,7 +77,7 @@ def process_blame_response(module_id, json_data, file_path, DB_DSN):
         conn.close()
 
 def get_or_create_engineer(cur, name, email):
-    """Upserts engineer and returns ID [cite: 30]"""
+    """Upserts engineer and returns ID"""
     cur.execute("SELECT id FROM engineers WHERE email = %s", (email,))
     res = cur.fetchone()
     if res:
@@ -103,14 +102,6 @@ def get_or_create_file(cur, module_id, path):
     """, (module_id, path))
     return cur.fetchone()[0]    
 
-def get_file_id(cur, module_id, path):
-    """Helper to get file ID"""
-    cur.execute("SELECT id FROM files WHERE file_path = %s AND module_id = %s", (path, module_id))
-    res = cur.fetchone()
-    if res:
-        return res[0]
-    # Handle creation if needed...
-    return 1 # Placeholder
 
 def recalculate_metrics(cur, file_id, total_lines):
     """
@@ -135,16 +126,16 @@ def recalculate_metrics(cur, file_id, total_lines):
         GROUP BY file_id, engineer_id
     """, (total_lines, file_id))
 
-if __name__ == "__main__":
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(script_dir, "blame_data.json")
+# if __name__ == "__main__":
+#     try:
+#         script_dir = os.path.dirname(os.path.abspath(__file__))
+#         json_path = os.path.join(script_dir, "blame_data.json")
         
-        with open(json_path, "r") as f:
-            json_data = json.load(f)
-            file_path = json_data['data']['repository']['file_name']
-            process_blame_response(1, json_data, file_path, DB_DSN)
-    except FileNotFoundError:
-        print("Error: The file 'blame_data.json' was not found.")
-    except json.JSONDecodeError as e:
-        print(f"Failed to decode JSON: {e}")
+#         with open(json_path, "r") as f:
+#             json_data = json.load(f)
+#             file_path = json_data['data']['repository']['file_name']
+#             process_blame_response(1, json_data, file_path, DB_DSN)
+#     except FileNotFoundError:
+#         print("Error: The file 'blame_data.json' was not found.")
+#     except json.JSONDecodeError as e:
+#         print(f"Failed to decode JSON: {e}")
