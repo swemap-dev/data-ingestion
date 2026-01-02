@@ -1,6 +1,6 @@
 # Git Blame Webhook & Polling
 
-This module implements a real-time system to detect new Git commits and update the blame database.
+This module implements a real-time system to detect new Git commits and update the database.
 
 ## Components
 - **`webhook.py`**: Flask server listening on `/webhook` for GitHub push events.
@@ -18,7 +18,7 @@ Fallback (under development):
 2. Ensure `.env` is configured with `GITHUB_TOKEN`.
 3. Ensure PostgreSQL database is running and reachable via the DSN in `oracle/blame/utils.py`.
 
-## Usage
+## Quickstart
 
 ### 1. Webhook Server (Real-time)
 
@@ -28,8 +28,10 @@ python oracle/blame/webhook.py
 ```
 This runs on port **5001** by default.
 
-#### Expose to Internet
+#### 2. Expose to Internet
 To receive GitHub webhooks, use **ngrok**:
+
+On a new terminal, run
 ```bash
 ngrok http 5001
 ```

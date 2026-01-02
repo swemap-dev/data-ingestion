@@ -76,6 +76,18 @@ class FileContentsService:
             print(f"Error fetching blame: {e}")
             return []
 
+    def get_all_file_paths(self, owner: str, repo: str, ref: str = "main") -> List[str]:
+        """
+        Get a list of all file paths in the repository.
+        """
+        try:
+            commit_sha, tree_sha, _ = self._get_tree_sha(owner, repo, ref)
+            files = self._get_all_files(owner, repo, tree_sha)
+            return list(files.keys())
+        except Exception as e:
+            print(f"Error getting file paths for {owner}/{repo}: {e}")
+            return []
+
     def get_recursive_file_contents(
         self, owner: str, repo: str, ref: Optional[str] = None, max_workers: Optional[int] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
