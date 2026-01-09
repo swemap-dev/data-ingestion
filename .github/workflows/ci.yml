@@ -7,7 +7,7 @@ on:
     branches: [ "main", "dev" ]
 
 jobs:
-  test:
+  test-db-and-webhook:
     runs-on: ubuntu-latest
 
     services:
@@ -50,4 +50,4 @@ jobs:
         env:
           DB_DSN: postgresql://postgres:test_password@localhost:5432/test_db
         run: |
-          pytest tests/smoke_test.py
+          pytest tests/db_and_webhook_test.py
