@@ -46,8 +46,8 @@ jobs:
           psql -h localhost -U postgres -d test_db -f db_schema/create_tables.sql
           psql -h localhost -U postgres -d test_db -f db_schema/init.sql
 
-      - name: Run Smoke Tests
+      - name: Run Tests
         env:
           DB_DSN: postgresql://postgres:test_password@localhost:5432/test_db
         run: |
-          pytest tests/db_and_webhook_test.py
+          pytest tests/
