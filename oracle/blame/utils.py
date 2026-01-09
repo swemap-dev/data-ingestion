@@ -3,6 +3,7 @@ import json
 import dotenv
 import os
 from psycopg.types.range import Range as NumericRange
+from urllib.parse import urlparse
 
 # Database Connection String
 dotenv.load_dotenv()
@@ -125,17 +126,30 @@ def recalculate_metrics(cur, file_id, total_lines):
         WHERE file_id = %s
         GROUP BY file_id, engineer_id
     """, (total_lines, file_id))
+    
 
-# if __name__ == "__main__":
-#     try:
-#         script_dir = os.path.dirname(os.path.abspath(__file__))
-#         json_path = os.path.join(script_dir, "blame_data.json")
-        
-#         with open(json_path, "r") as f:
-#             json_data = json.load(f)
-#             file_path = json_data['data']['repository']['file_name']
-#             process_blame_response(1, json_data, file_path, DB_DSN)
-#     except FileNotFoundError:
-#         print("Error: The file 'blame_data.json' was not found.")
-#     except json.JSONDecodeError as e:
-#         print(f"Failed to decode JSON: {e}")
+def get_monitored_repos(conn_str):
+    """
+    Returns a list of monitored repository URLs from the database.
+    """
+    try:
+        with psycopg.connect(conn_str) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT url FROM repos")
+                return [row[0] for row in cur.fetchall() if row[0]]
+    except Exception as e:
+        print(f"Error fetching monitored repos: {e}")
+        return []
+
+def parse_repo_url(url):
+    """
+    Parses owner and repo name from a GitHub URL.
+    """
+    parsed = urlparse(url)
+    path = parsed.path.strip('/')
+    if path.endswith('.git'):
+        path = path[:-4]
+    parts = path.split('/')
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return None, None

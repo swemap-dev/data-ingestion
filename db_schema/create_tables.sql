@@ -55,14 +55,14 @@ CREATE TABLE files (
     ast_summary JSONB      -- Great usage of JSONB for cached analysis
 );
 
-CREATE TABLE commits (
-    hash TEXT PRIMARY KEY, -- Git hashes are strings, not integers
-    repo_id INTEGER REFERENCES repos(id) ON DELETE CASCADE,
-    file_id INTEGER REFERENCES files(id) ON DELETE SET NULL, -- See note below
-    type commit_type_enum,
-    timestamp TIMESTAMP,
-    message TEXT
-);
+-- CREATE TABLE commits (
+--     hash TEXT PRIMARY KEY, -- Git hashes are strings, not integers
+--     repo_id INTEGER REFERENCES repos(id) ON DELETE CASCADE,
+--     file_id INTEGER REFERENCES files(id) ON DELETE SET NULL, -- See note below
+--     type commit_type_enum,
+--     timestamp TIMESTAMP,
+--     message TEXT
+-- );
 
 CREATE TABLE reviews (
     id SERIAL PRIMARY KEY,
@@ -114,23 +114,23 @@ CREATE TABLE file_dependencies (
     raw_import_statement VARCHAR(512)
 );
 
--- The "Hunk" table now acts purely as a metadata pointer
-CREATE TABLE commit_hunks (
-    id SERIAL PRIMARY KEY,
-    commit_hash TEXT REFERENCES commits(hash) ON DELETE CASCADE,
-    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
-    engineer_id INTEGER REFERENCES engineers(id) ON DELETE CASCADE,
+-- -- The "Hunk" table now acts purely as a metadata pointer
+-- CREATE TABLE commit_hunks (
+--     id SERIAL PRIMARY KEY,
+--     commit_hash TEXT REFERENCES commits(hash) ON DELETE CASCADE,
+--     file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+--     engineer_id INTEGER REFERENCES engineers(id) ON DELETE CASCADE,
     
-    -- The critical metadata: "The code of interest is between lines 20 and 50"
-    line_range int4range NOT NULL, 
+--     -- The critical metadata: "The code of interest is between lines 20 and 50"
+--     line_range int4range NOT NULL, 
     
-    -- Who lost code? (For ownership calculation)
-    overwritten_engineer_id INTEGER, 
+--     -- Who lost code? (For ownership calculation)
+--     overwritten_engineer_id INTEGER, 
     
-    -- Stats
-    lines_added INTEGER,
-    lines_deleted INTEGER
-);
+--     -- Stats
+--     lines_added INTEGER,
+--     lines_deleted INTEGER
+-- );
 
 -- The Ownership Cache (Snapshot)
 -- Running tally that we update after every commit.

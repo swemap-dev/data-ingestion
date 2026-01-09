@@ -6,7 +6,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from flask import Flask, request, jsonify
-from utils import process_blame_response
+from utils import process_blame_response, get_monitored_repos, parse_repo_url, DB_DSN
 
 from src.github.client import GitHubClient
 from src.github.file_contents import FileContentsService
@@ -53,6 +53,48 @@ def worker():
 
 # Start worker thread
 threading.Thread(target=worker, daemon=True).start()
+
+def initialize():
+    """
+    Initializes the database by fetching blame data for all files in monitored repositories.
+    """
+    print("Initialization started...")
+    # Give some time for DB and network to be ready if needed
+    time.sleep(2) 
+    
+    try:
+        repos = get_monitored_repos(DB_DSN)
+        for repo_url in repos:
+            owner, name = parse_repo_url(repo_url)
+            if not owner or not name:
+                print(f"Skipping invalid repo URL: {repo_url}")
+                continue
+                
+            print(f"Initializing repository: {owner}/{name}")
+            
+            # Get default branch head
+            try:
+                repo_meta = client.get_repository(owner, name)
+                ref = repo_meta.default_branch
+                
+                # We need the commit hash to associate with the blame data
+                # Using _get_tree_sha to get the commit SHA efficiently
+                commit_sha, _, _ = service._get_tree_sha(owner, name, ref)
+                
+                file_paths = service.get_all_file_paths(owner, name, ref)
+                print(f"Enqueuing {len(file_paths)} initialization jobs for {owner}/{name} at {commit_sha}")
+                
+                for fpath in file_paths:
+                    job_queue.put((owner, name, commit_sha, fpath))
+                    
+            except Exception as e:
+                print(f"Error initializing {owner}/{name}: {e}")
+                
+    except Exception as e:
+        print(f"Initialization failed: {e}")
+
+# Start initialization thread
+threading.Thread(target=initialize, daemon=True).start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
