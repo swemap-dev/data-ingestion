@@ -6,7 +6,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from flask import Flask, request, jsonify
-from utils import process_blame_response, get_monitored_repos, parse_repo_url, DB_DSN
+from utils import process_blame_response, get_monitored_repos, parse_repo_url, DB_DSN, get_or_create_module, get_module_id
+import psycopg
 
 from src.github.client import GitHubClient
 from src.github.file_contents import FileContentsService
@@ -37,10 +38,24 @@ def worker():
             try:
                 print(f"Worker picked up: {file_path} @ {commit_hash}")
                 blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, 'main')
-                # print(f"======Blame data:\n {blame_data}======")
-                # with open('blame_data.json', 'w') as f:
-                #     json.dump(blame_data, f, indent=2)
-                process_blame_response(1, blame_data, file_path)
+                
+                # Determine Module ID
+                # Extract directory from file path to find module
+                dir_path = os.path.dirname(file_path)
+                
+                module_id = 1 # Default fallback
+                try:
+                    with psycopg.connect(DB_DSN) as conn:
+                        with conn.cursor() as cur:
+                            # Using repo_id=1 hardcoded as requested
+                            # Use get_or_create_module to ensure it exists even if new
+                            # Using directory path as the name
+                            module_id = get_or_create_module(cur, 1, dir_path, dir_path)
+                            conn.commit()
+                except Exception as e:
+                    print(f"Error getting/creating module_id: {e}")
+
+                process_blame_response(module_id, blame_data, file_path)
             except Exception as e:
                 print(f"Error processing job {item}: {e}")
             finally:
@@ -84,6 +99,21 @@ def initialize():
                 file_paths = service.get_all_file_paths(owner, name, ref)
                 print(f"Enqueuing {len(file_paths)} initialization jobs for {owner}/{name} at {commit_sha}")
                 
+                # Pre-populate Modules Table
+                unique_dirs = set(os.path.dirname(f) for f in file_paths)
+                print(f"Found {len(unique_dirs)} unique directories/modules to initialize.")
+                
+                try:
+                    with psycopg.connect(DB_DSN) as conn:
+                        with conn.cursor() as cur:
+                            for d in unique_dirs:
+                                # Hardcoded repo_id=1 as requested
+                                # Using directory path as the name
+                                get_or_create_module(cur, 1, d, d) 
+                        conn.commit()
+                except Exception as e:
+                    print(f"Error populating modules for {owner}/{name}: {e}")
+
                 for fpath in file_paths:
                     job_queue.put((owner, name, commit_sha, fpath))
                     
