@@ -3,7 +3,7 @@
 This module implements a real-time system to detect new Git commits and update the database.
 
 ## Components
-- **`webhook.py`**: Flask server listening on `/webhook` for GitHub push events.
+- **`webhook.py`**: Flask server listening on `/webhook` link for GitHub push events.
 
 Fallback (under development):
 - **`polling.py`**: Fallback script to poll GitHub for changes in monitored repositories.
