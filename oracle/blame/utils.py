@@ -153,3 +153,25 @@ def parse_repo_url(url):
     if len(parts) >= 2:
         return parts[0], parts[1]
     return None, None
+
+def get_or_create_module(cur, repo_id, name, dir_path):
+    """Upserts module and returns ID"""
+    cur.execute("SELECT id FROM modules WHERE repo_id = %s AND name = %s", (repo_id, name))
+    res = cur.fetchone()
+    if res:
+        return res[0]
+    
+    cur.execute("""
+        INSERT INTO modules (repo_id, name, dir_path) VALUES (%s, %s, %s) 
+        RETURNING id
+    """, (repo_id, name, dir_path))
+    return cur.fetchone()[0]
+
+def get_module_id(cur, repo_id, dir_path):
+    """Returns module ID for a directory path, or None if not found"""
+    # Using dir_path as the name as per requirements
+    name = dir_path
+    
+    cur.execute("SELECT id FROM modules WHERE repo_id = %s AND name = %s", (repo_id, name))
+    res = cur.fetchone()
+    return res[0] if res else None
