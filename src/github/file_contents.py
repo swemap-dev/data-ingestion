@@ -27,6 +27,7 @@ class FileContentsService:
                   blame(path: $path) {
                     ranges {
                       commit {
+                        id
                         oid
                         author {
                           name
@@ -62,6 +63,46 @@ class FileContentsService:
                 print(f"GraphQL errors: {data['errors']}")
                 return []
 
+            # ---------------------------------------------------------
+            # Batch fetch reviewers for all unique commits found
+            # ---------------------------------------------------------
+            try:
+                # 1. Extract unique commit IDs
+                commit_ids = set()
+                
+                # Safer extraction
+                repo_data = data.get('data', {}).get('repository')
+                if repo_data:
+                    ref_data = repo_data.get('ref')
+                    if ref_data:
+                        target = ref_data.get('target')
+                        if target:
+                            blame = target.get('blame')
+                            if blame:
+                                ranges = blame.get('ranges', [])
+                                for r in ranges:
+                                    c_id = r.get('commit', {}).get('id')
+                                    if c_id:
+                                        commit_ids.add(c_id)
+                
+                                # 2. Fetch reviewers if we have any commits
+                                reviewers_map = {}
+                                if commit_ids:
+                                    # Fetch valid reviewers for all commits
+                                    # Parallelized inside _get_reviewers_for_commits to handle large sets efficiently
+                                    reviewers_map = self._get_reviewers_for_commits(list(commit_ids))
+
+                                # 3. Inject reviewers back into the response data structure
+                                for r in ranges:
+                                    c = r.get('commit', {})
+                                    c_id = c.get('id')
+                                    if c_id and c_id in reviewers_map:
+                                        c['reviewers'] = reviewers_map[c_id]
+                        
+            except Exception as e:
+                print(f"Error fetching/injecting reviewers: {e}")
+            # ---------------------------------------------------------
+
             # Inject metadata requested by user
             try:
                 if 'data' in data and 'repository' in data['data']:
@@ -75,6 +116,119 @@ class FileContentsService:
         except Exception as e:
             print(f"Error fetching blame: {e}")
             return []
+
+    def _get_reviewers_for_commits(self, commit_ids: List[str]) -> Dict[str, List[Dict[str, str]]]:
+        """
+        Fetch associated Pull Request reviews for a list of commit Node IDs.
+        Returns a map: commit_id -> list of reviewer dicts ({name, email}).
+        Uses parallel execution for batches to handle large datasets efficiently.
+        """
+        if not commit_ids:
+            return {}
+
+        # Chunk the IDs
+        CHUNK_SIZE = 50
+        chunks = [commit_ids[i : i + CHUNK_SIZE] for i in range(0, len(commit_ids), CHUNK_SIZE)]
+        
+        results = {}
+        
+        # Max workers for parallel batch requests
+        MAX_WORKERS = 10
+        
+        def fetch_chunk(chunk_ids):
+            chunk_results = {}
+            query = """
+            query GetCommitReviewers($ids: [ID!]!) {
+              nodes(ids: $ids) {
+                ... on Commit {
+                  id
+                  associatedPullRequests(first: 1) {
+                    nodes {
+                      reviews(first: 10) {
+                        nodes {
+                          author {
+                            ... on User {
+                              name
+                              email
+                              login
+                            }
+                            ... on Bot {
+                              login
+                            }
+                          }
+                          state
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
+            
+            # Create a new local variable for headers just in case
+            headers = {"Content-Type": "application/json"}
+            variables = {"ids": chunk_ids}
+            
+            try:
+                # self.session is thread-safe
+                response = self.session.post(
+                    self.graphql_url, headers=headers, json={"query": query, "variables": variables}
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if "errors" in data:
+                    print(f"GraphQL errors in _get_reviewers_for_commits chunk: {data['errors']}")
+                    return {}
+
+                nodes = data.get("data", {}).get("nodes", [])
+                for node in nodes:
+                    if not node: 
+                        continue
+                        
+                    c_id = node.get("id")
+                    reviewers = []
+                    
+                    prs = node.get("associatedPullRequests", {}).get("nodes", [])
+                    if prs:
+                        pr = prs[0]
+                        reviews = pr.get("reviews", {}).get("nodes", [])
+                        
+                        seen_authors = set()
+                        for review in reviews:
+                            author = review.get("author")
+                            if not author:
+                                continue
+                                
+                            login = author.get("login")
+                            if login and login not in seen_authors:
+                                seen_authors.add(login)
+                                reviewer_info = {
+                                    "name": author.get("name"),
+                                    "email": author.get("email"),
+                                    "login": login
+                                }
+                                reviewers.append(reviewer_info)
+                    
+                    chunk_results[c_id] = reviewers
+            except Exception as e:
+                print(f"Error fetching reviewers chunk: {e}")
+            
+            return chunk_results
+
+        # Execute chunks in parallel
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_chunk = {executor.submit(fetch_chunk, chunk): chunk for chunk in chunks}
+            
+            for future in as_completed(future_to_chunk):
+                try:
+                    chunk_data = future.result()
+                    results.update(chunk_data)
+                except Exception as e:
+                    print(f"Chunk processing failed: {e}")
+
+        return results
 
     def get_all_file_paths(self, owner: str, repo: str, ref: str = "main") -> List[str]:
         """
