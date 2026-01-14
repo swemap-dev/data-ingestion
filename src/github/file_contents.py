@@ -17,6 +17,15 @@ class FileContentsService:
         """
         Get rich blame data for a specific file using custom GraphQL query.
         Returns a list of blame ranges with commit author info and age.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            file_path (str): Path to the file.
+            ref (str): Branch or commit reference (default: "main").
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionary containing blame ranges and metadata.
         """
         query = """
         query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!) {
@@ -26,14 +35,7 @@ class FileContentsService:
                 ... on Commit {
                   blame(path: $path) {
                     ranges {
-                      commit {
-                        id
-                        oid
-                        author {
-                          name
-                          email
-                        }
-                      }
+                      commit { id oid author { name email } }
                       startingLine
                       endingLine
                       age
@@ -122,6 +124,12 @@ class FileContentsService:
         Fetch associated Pull Request reviews for a list of commit Node IDs.
         Returns a map: commit_id -> list of reviewer dicts ({name, email}).
         Uses parallel execution for batches to handle large datasets efficiently.
+
+        Parameters:
+            commit_ids (List[str]): List of commit IDs (GraphQL Node IDs).
+
+        Returns:
+            Dict[str, List[Dict[str, str]]]: A mapping of commit_id to a list of reviewer details.
         """
         if not commit_ids:
             return {}
@@ -143,18 +151,16 @@ class FileContentsService:
                 ... on Commit {
                   id
                   associatedPullRequests(first: 1) {
+                # LIMITATION: Only fetching the first associated PR.
+                # A commit can belong to multiple PRs (e.g. if a branch is merged into multiple target branches,
+                # or if a PR is closed and a new one opened with the same branch).
+                # We assume the first one returned is sufficiently representative for finding the reviewer.
                     nodes {
                       reviews(first: 10) {
                         nodes {
                           author {
-                            ... on User {
-                              name
-                              email
-                              login
-                            }
-                            ... on Bot {
-                              login
-                            }
+                            ... on User { name email login }
+                            ... on Bot { login }
                           }
                           state
                         }
@@ -170,52 +176,74 @@ class FileContentsService:
             headers = {"Content-Type": "application/json"}
             variables = {"ids": chunk_ids}
             
-            try:
-                # self.session is thread-safe
-                response = self.session.post(
-                    self.graphql_url, headers=headers, json={"query": query, "variables": variables}
-                )
-                response.raise_for_status()
-                data = response.json()
-
-                if "errors" in data:
-                    print(f"GraphQL errors in _get_reviewers_for_commits chunk: {data['errors']}")
-                    return {}
-
-                nodes = data.get("data", {}).get("nodes", [])
-                for node in nodes:
-                    if not node: 
-                        continue
-                        
-                    c_id = node.get("id")
-                    reviewers = []
-                    
-                    prs = node.get("associatedPullRequests", {}).get("nodes", [])
-                    if prs:
-                        pr = prs[0]
-                        reviews = pr.get("reviews", {}).get("nodes", [])
-                        
-                        seen_authors = set()
-                        for review in reviews:
-                            author = review.get("author")
-                            if not author:
-                                continue
-                                
-                            login = author.get("login")
-                            if login and login not in seen_authors:
-                                seen_authors.add(login)
-                                reviewer_info = {
-                                    "name": author.get("name"),
-                                    "email": author.get("email"),
-                                    "login": login
-                                }
-                                reviewers.append(reviewer_info)
-                    
-                    chunk_results[c_id] = reviewers
-            except Exception as e:
-                print(f"Error fetching reviewers chunk: {e}")
+            retries = 3
+            backoff = 2
             
-            return chunk_results
+            for attempt in range(retries + 1):
+                try:
+                    # self.session's connection pool is thread-safe for concurrent API calls
+                    response = self.session.post(
+                        self.graphql_url, headers=headers, json={"query": query, "variables": variables}
+                    )
+                    
+                    if response.status_code == 429:
+                        if attempt < retries:
+                            import time
+                            sleep_time = backoff ** attempt
+                            print(f"Rate limited (429). Retrying in {sleep_time}s...")
+                            time.sleep(sleep_time)
+                            continue
+                        else:
+                            print(f"Rate limited (429) - Max retries reached for chunk.")
+                            return {}
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if "errors" in data:
+                        print(f"GraphQL errors in _get_reviewers_for_commits chunk: {data['errors']}")
+                        return {}
+
+                    nodes = data.get("data", {}).get("nodes", [])
+                    for node in nodes:
+                        if not node: 
+                            continue
+                            
+                        c_id = node.get("id")
+                        reviewers = []
+                        
+                        prs = node.get("associatedPullRequests", {}).get("nodes", [])
+                        if prs:
+                            pr = prs[0]
+                            reviews = pr.get("reviews", {}).get("nodes", [])
+                            
+                            seen_authors = set()
+                            for review in reviews:
+                                author = review.get("author")
+                                if not author:
+                                    continue
+                                    
+                                login = author.get("login")
+                                if login and login not in seen_authors:
+                                    seen_authors.add(login)
+                                    reviewer_info = {
+                                        "name": author.get("name"),
+                                        "email": author.get("email"),
+                                        "login": login
+                                    }
+                                    reviewers.append(reviewer_info)
+                        
+                        chunk_results[c_id] = reviewers
+                    
+                    return chunk_results # Success
+
+                except Exception as e:
+                    print(f"Error fetching reviewers chunk (Attempt {attempt+1}/{retries+1}): {e}")
+                    if attempt < retries:
+                         import time
+                         time.sleep(1) # Simple short sleep for non-429 errors
+            
+            return {}
 
         # Execute chunks in parallel
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -233,6 +261,14 @@ class FileContentsService:
     def get_all_file_paths(self, owner: str, repo: str, ref: str = "main") -> List[str]:
         """
         Get a list of all file paths in the repository.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            ref (str): Reference name (e.g., "main").
+
+        Returns:
+            List[str]: A list of file paths.
         """
         try:
             commit_sha, tree_sha, _ = self._get_tree_sha(owner, repo, ref)
@@ -245,6 +281,18 @@ class FileContentsService:
     def get_recursive_file_contents(
         self, owner: str, repo: str, ref: Optional[str] = None, max_workers: Optional[int] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Recursively get file contents for a whole repository.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            ref (Optional[str]): Branch or commit reference. If None, uses default branch.
+            max_workers (Optional[int]): Max threads for parallel processing.
+
+        Returns:
+             Dict[str, List[Dict[str, Any]]]: Dictionary mapping file paths to their content and blame info.
+        """
         if not ref:
             repo_meta = self.client.get_repository(owner, repo)
             ref = repo_meta.default_branch
@@ -277,6 +325,17 @@ class FileContentsService:
     def _get_tree_sha(
         self, owner: str, repo: str, ref: str
     ) -> tuple[str, str, Dict[str, Any]]:
+        """
+        Get the tree SHA for a given reference.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            ref (str): Reference name (e.g., "main").
+
+        Returns:
+            tuple[str, str, Dict[str, Any]]: A tuple containing (commit_sha, tree_sha, commit_data).
+        """
         url = f"{self.base_url}/repos/{owner}/{repo}/git/ref/heads/{ref}"
         print(f"GET {url}")
         response = self.session.get(url)
@@ -292,6 +351,17 @@ class FileContentsService:
         return commit_sha, tree_sha, commit_data
 
     def _get_all_files(self, owner: str, repo: str, tree_sha: str) -> Dict[str, str]:
+        """
+        Get all files in a tree recursively.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            tree_sha (str): The SHA of the tree to traverse.
+
+        Returns:
+            Dict[str, str]: A dictionary mapping file paths to their blob SHAs.
+        """
         url = f"{self.base_url}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
         print(f"GET {url}")
         response = self.session.get(url)
@@ -308,7 +378,18 @@ class FileContentsService:
     def _get_blame_via_graphql(
         self, owner: str, repo: str, file_path: str, ref: str
     ) -> Optional[Dict[int, str]]:
-        """Get blame data via GraphQL API and return a mapping of line number to commit SHA."""
+        """
+        Get blame data via GraphQL API and return a mapping of line number to commit SHA.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            file_path (str): Path to the file.
+            ref (str): Reference name.
+
+        Returns:
+            Optional[Dict[int, str]]: A dictionary mapping line numbers to commit SHAs, or None if failed.
+        """
         query = """
         query GetBlameData($owner: String!, $repo: String!, $ref: String!, $path: String!) {
           repository(owner: $owner, name: $repo) {
@@ -389,6 +470,19 @@ class FileContentsService:
     def _get_file_blame(
         self, owner: str, repo: str, file_path: str, blob_sha: str, ref: str
     ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch file content and blame data for a single file.
+
+        Parameters:
+            owner (str): Repository owner.
+            repo (str): Repository name.
+            file_path (str): Path to the file.
+            blob_sha (str): SHA of the file blob.
+            ref (str): Reference name.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: List of lines with content and commit SHA, or None if failed.
+        """
         blob_url = f"{self.base_url}/repos/{owner}/{repo}/git/blobs/{blob_sha}"
         thread_id = threading.get_ident()
         print(f"[Thread {thread_id}] GET {blob_url} (file: {file_path})")

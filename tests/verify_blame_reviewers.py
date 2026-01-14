@@ -1,4 +1,3 @@
-
 import os
 import sys
 import json
@@ -75,15 +74,19 @@ def verify():
             
             if found_reviewers:
                 print("\nSUCCESS: Found reviewers in at least one commit.")
+                return True
             else:
                 print("\nWARNING: No reviewers found. This might be normal if recent commits have no PRs/reviews, or if the repo is new/private without PRs.")
+                return False
                 
         except KeyError as e:
             print(f"Structure lookup failed: {e}")
             print(json.dumps(data, indent=2))
+            return False
 
     except Exception as e:
         print(f"Execution failed: {e}")
+        return False
 
 if __name__ == "__main__":
     verify()
