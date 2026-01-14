@@ -13,10 +13,10 @@ class FileContentsService:
         self.base_url = client.base_url
         self.graphql_url = "https://api.github.com/graphql"
 
-    def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main") -> List[Dict[str, Any]]:
+    def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main") -> Dict[str, Any]:
         """
         Get rich blame data for a specific file using custom GraphQL query.
-        Returns a list of blame ranges with commit author info and age.
+        Returns blame data dictionary with commit author info and age.
 
         Parameters:
             owner (str): Repository owner.
@@ -25,7 +25,7 @@ class FileContentsService:
             ref (str): Branch or commit reference (default: "main").
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionary containing blame ranges and metadata.
+            Dict[str, Any]: A dictionary containing blame ranges and metadata.
         """
         query = """
         query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!) {
@@ -63,7 +63,7 @@ class FileContentsService:
             
             if "errors" in data:
                 print(f"GraphQL errors: {data['errors']}")
-                return []
+                return {}
 
             # ---------------------------------------------------------
             # Batch fetch reviewers for all unique commits found
@@ -103,7 +103,6 @@ class FileContentsService:
                         
             except Exception as e:
                 print(f"Error fetching/injecting reviewers: {e}")
-            # ---------------------------------------------------------
 
             # Inject metadata requested by user
             try:
@@ -117,7 +116,7 @@ class FileContentsService:
             
         except Exception as e:
             print(f"Error fetching blame: {e}")
-            return []
+            return {}
 
     def _get_reviewers_for_commits(self, commit_ids: List[str]) -> Dict[str, List[Dict[str, str]]]:
         """

@@ -40,23 +40,23 @@ def verify():
         # Check if we got data
         if not data:
             print("No data returned.")
-            return
+            return False
 
         # Navigate to ranges
         try:
             if data.get('data') is None:
                 print(f"Data is None. Full response: {json.dumps(data, indent=2)}")
-                return
+                return False
                 
             repo_data = data['data'].get('repository')
             if repo_data is None:
                 print(f"Repository is None. Full response: {json.dumps(data, indent=2)}")
-                return
+                return False
                 
             ref_data = repo_data.get('ref')
             if ref_data is None:
                 print(f"Ref is None (branch might be wrong). Full response: {json.dumps(data, indent=2)}")
-                return
+                return False
 
             target = ref_data.get('target')
             if not target:
