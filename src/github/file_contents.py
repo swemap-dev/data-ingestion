@@ -194,7 +194,7 @@ class FileContentsService:
                             time.sleep(sleep_time)
                             continue
                         else:
-                            print(f"Rate limited (429) - Max retries reached for chunk.")
+                            print("Rate limited (429) - Max retries reached for chunk.")
                             return {}
 
                     response.raise_for_status()

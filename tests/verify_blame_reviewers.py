@@ -10,7 +10,7 @@ def verify():
     # Ensure token is present
     if not os.environ.get("GITHUB_TOKEN"):
         print("Error: GITHUB_TOKEN env var not set.")
-        return
+        return False
 
     client = GitHubClient()
     service = FileContentsService(client)
@@ -58,7 +58,15 @@ def verify():
                 print(f"Ref is None (branch might be wrong). Full response: {json.dumps(data, indent=2)}")
                 return
 
-            ranges = ref_data['target']['blame']['ranges']
+            target = ref_data.get('target')
+            if not target:
+                print("Target is None.")
+                return False
+            blame = target.get('blame')
+            if not blame:
+                print("Blame is None.")
+                return False
+            ranges = blame.get('ranges', [])
             print(f"Found {len(ranges)} blame ranges.")
             
             found_reviewers = False
