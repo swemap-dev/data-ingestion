@@ -1,5 +1,5 @@
 import pytest
-from oracle.blame.risk_score.risk_score import (risk_scores, ownership, label)
+from oracle.risk_score.risk_score import (risk_scores, ownership, label)
 
 @pytest.mark.parametrize(
     "table, expected",
