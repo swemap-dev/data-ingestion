@@ -1,2 +1,1 @@
 INSERT INTO repos ( id, name, url, language, risk_score ) VALUES (1, 'Webhook_Test', 'https://github.com/justin-chung-swemap/Webhook_Test.git', 'Python', 0);
--- INSERT INTO modules ( id, name, repo_id ) VALUES (1, 'Webhook_Test', 1);
