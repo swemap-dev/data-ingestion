@@ -223,3 +223,139 @@ def test_webhook_push_flow(mock_github, flask_client, db_conn):
          # Check Engineer
         cur.execute("SELECT id FROM engineers WHERE email = %s", ('new@example.com',))
         assert cur.fetchone() is not None
+
+def test_ownership_percentage(mock_github, db_conn):
+    """Test get_review_percentage_of_file with sequential commits."""
+    mock_client, mock_service = mock_github
+    file_path = "ownership_test_file.py"
+    
+    # Import necessary functions
+    from oracle.blame.utils import process_blame_response, get_or_create_engineer
+    from oracle.ownership.analytics import get_review_percentage_of_file # Updated name
+
+    # Setup Engineers
+    with db_conn.cursor() as cur:
+        # We need known IDs for easier assertion, or we fetch them after creation
+        pass 
+
+    # --- Commit 1 ---
+    # Eng 1 wrote [1, 50], Reviewed by Eng 2
+    # Eng 2 wrote [51, 100], Reviewed by Eng 1
+    # Note: GraphQL blame ranges are inclusive 1-based.
+    
+    blame_data_1 = {
+        "data": {
+            "repository": {
+                "ref": {
+                    "target": {
+                        "blame": {
+                            "ranges": [
+                                {
+                                    "startingLine": 1,
+                                    "endingLine": 50,
+                                    "commit": {
+                                        "oid": "commit_1",
+                                        "author": {"name": "Eng 1", "email": "eng1@test.com"},
+                                        "reviewers": [{"name": "Eng 2", "email": "eng2@test.com", "submittedAt": "2023-01-01T10:00:00Z"}]
+                                    }
+                                },
+                                {
+                                    "startingLine": 51,
+                                    "endingLine": 100,
+                                    "commit": {
+                                        "oid": "commit_1",
+                                        "author": {"name": "Eng 2", "email": "eng2@test.com"},
+                                        "reviewers": [{"name": "Eng 1", "email": "eng1@test.com", "submittedAt": "2023-01-01T10:00:00Z"}]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # Process Commit 1
+    print("Processing Commit 1")
+    process_blame_response(1, blame_data_1, file_path)
+    
+    # Verify Commit 1 Metrics
+    # We need file_id to call analytics
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT id FROM files WHERE file_path = %s", (file_path,))
+        file_id = cur.fetchone()[0]
+        
+    results_1 = get_review_percentage_of_file(file_id)
+    # Expected: 50% for Eng 1, 50% for Eng 2
+    # Convert to dictionary for easier checking
+    res_dict_1 = {name: pct for name, pct in results_1}
+    
+    assert len(res_dict_1) == 2
+    assert res_dict_1.get("Eng 1") == 50.0
+    assert res_dict_1.get("Eng 2") == 50.0
+    
+    # --- Commit 2 ---
+    # Eng 2 overwrote [26, 50], Reviewed by Eng 1
+    # This splits the first range.
+    # New state:
+    # [1, 25]: Eng 1 (Rev: Eng 2) (From Commit 1)
+    # [26, 50]: Eng 2 (Rev: Eng 1) (From Commit 2)
+    # [51, 100]: Eng 2 (Rev: Eng 1) (From Commit 1)
+    
+    blame_data_2 = {
+        "data": {
+            "repository": {
+                "ref": {
+                    "target": {
+                        "blame": {
+                            "ranges": [
+                                {
+                                    "startingLine": 1,
+                                    "endingLine": 25,
+                                    "commit": {
+                                        "oid": "commit_1", # Old commit
+                                        "author": {"name": "Eng 1", "email": "eng1@test.com"},
+                                        "reviewers": [{"name": "Eng 2", "email": "eng2@test.com", "submittedAt": "2023-01-01T10:00:00Z"}]
+                                    }
+                                },
+                                {
+                                    "startingLine": 26, # Overwritten
+                                    "endingLine": 50,
+                                    "commit": {
+                                        "oid": "commit_2", # New commit
+                                        "author": {"name": "Eng 2", "email": "eng2@test.com"},
+                                        "reviewers": [{"name": "Eng 1", "email": "eng1@test.com", "submittedAt": "2023-01-02T10:00:00Z"}]
+                                    }
+                                },
+                                {
+                                    "startingLine": 51,
+                                    "endingLine": 100,
+                                    "commit": {
+                                        "oid": "commit_1", # Old commit
+                                        "author": {"name": "Eng 2", "email": "eng2@test.com"},
+                                        "reviewers": [{"name": "Eng 1", "email": "eng1@test.com", "submittedAt": "2023-01-01T10:00:00Z"}]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # Process Commit 2
+    print("Processing Commit 2")
+    process_blame_response(1, blame_data_2, file_path)
+    
+    results_2 = get_review_percentage_of_file(file_id)
+    # Expected: 
+    # Eng 1 Reviews: [26, 50] (25 lines) + [51, 100] (50 lines) = 75 lines -> 75%
+    # Eng 2 Reviews: [1, 25] (25 lines) -> 25%
+    
+    res_dict_2 = {name: pct for name, pct in results_2}
+
+    assert res_dict_2.get("Eng 1") == 75.0
+    assert res_dict_2.get("Eng 2") == 25.0
+    assert len(res_dict_2) == 2

@@ -115,8 +115,7 @@ def initialize():
                     print(f"Error populating modules for {owner}/{name}: {e}")
 
                 for fpath in file_paths:
-                    if fpath.startswith("addons/base/"):
-                        job_queue.put((owner, name, commit_sha, fpath))
+                    job_queue.put((owner, name, commit_sha, fpath))
                     
             except Exception as e:
                 print(f"Error initializing {owner}/{name}: {e}")

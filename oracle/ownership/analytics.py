@@ -57,4 +57,4 @@ def get_review_percentage_of_file(file_id: int) -> List[Tuple[str, float]]:
         return []
 
 if __name__ == "__main__":
-    print(get_review_percentage_of_file(74))
+    print(get_review_percentage_of_file(91))
