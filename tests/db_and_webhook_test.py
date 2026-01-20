@@ -224,9 +224,8 @@ def test_webhook_push_flow(mock_github, flask_client, db_conn):
         cur.execute("SELECT id FROM engineers WHERE email = %s", ('new@example.com',))
         assert cur.fetchone() is not None
 
-def test_ownership_percentage(mock_github, db_conn):
+def test_ownership_percentage(db_conn):
     """Test get_review_percentage_of_file with sequential commits."""
-    mock_client, mock_service = mock_github
     file_path = "ownership_test_file.py"
     
     # Import necessary functions
@@ -292,8 +291,8 @@ def test_ownership_percentage(mock_github, db_conn):
     res_dict_1 = {name: pct for name, pct in results_1}
     
     assert len(res_dict_1) == 2
-    assert res_dict_1.get("Eng 1") == 50.0
-    assert res_dict_1.get("Eng 2") == 50.0
+    assert res_dict_1.get("Eng 1") == pytest.approx(50.0)
+    assert res_dict_1.get("Eng 2") == pytest.approx(50.0)
     
     # --- Commit 2 ---
     # Eng 2 overwrote [26, 50], Reviewed by Eng 1
@@ -356,6 +355,6 @@ def test_ownership_percentage(mock_github, db_conn):
     
     res_dict_2 = {name: pct for name, pct in results_2}
 
-    assert res_dict_2.get("Eng 1") == 75.0
-    assert res_dict_2.get("Eng 2") == 25.0
+    assert res_dict_2.get("Eng 1") == pytest.approx(75.0)
+    assert res_dict_2.get("Eng 2") == pytest.approx(25.0)
     assert len(res_dict_2) == 2

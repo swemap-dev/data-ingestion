@@ -52,9 +52,6 @@ def get_review_percentage_of_file(file_id: int) -> List[Tuple[str, float]]:
                 
                 return results
 
-    except Exception as e:
-        print(f"Error calculating review percentage: {e}")
-        return []
-
-if __name__ == "__main__":
-    print(get_review_percentage_of_file(91))
+    except psycopg.Error:
+            logger.exception("Error calculating review percentage for file_id=%s", file_id)
+            return []
