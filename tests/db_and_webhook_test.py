@@ -1,11 +1,9 @@
 import pytest
 import os
-import json
-import threading
-import time
 import psycopg
+import logging
 from unittest.mock import MagicMock, patch
-from flask import Flask
+import dotenv
 
 # Add parent directory to path to allow imports
 import sys
@@ -18,7 +16,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../orac
 from oracle.blame.webhook import app, initialize, job_queue, worker
 
 # Constants
+dotenv.load_dotenv()
 DB_DSN = os.getenv('DB_DSN', "postgresql://postgres:test_password@localhost:5432/test_db")
+logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="module")
 def db_conn():
