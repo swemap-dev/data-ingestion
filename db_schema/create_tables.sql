@@ -147,8 +147,11 @@ CREATE TABLE file_ownership_metrics (
     -- The "Influence" Score (Optional for ML)
     -- How many times has this person touched this file?
     commit_count INTEGER DEFAULT 0,
+
+    -- Differentiate between WROTE and REVIEWED
+    type interaction_type_enum,
     
-    PRIMARY KEY (file_id, engineer_id)
+    PRIMARY KEY (file_id, engineer_id, type)
 );
 
 CREATE EXTENSION IF NOT EXISTS btree_gist;
@@ -158,6 +161,10 @@ CREATE TABLE line_ownership (
     file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
     engineer_id INTEGER REFERENCES engineers(id) ON DELETE CASCADE,
     
+    -- Who reviewed this code?
+    reviewer_id INTEGER REFERENCES engineers(id) ON DELETE SET NULL,
+    timestamp TIMESTAMP,
+
     -- RANGE OPTIMIZATION: Use int4range instead of start_line/end_line
     -- Example: [1, 100) includes 1 up to 99.
     line_range int4range NOT NULL, 

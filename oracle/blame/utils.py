@@ -31,19 +31,42 @@ def process_blame_response(module_id, json_data, file_path):
         
         # 2. Get or Create File/Engineer mappings
         file_id = get_or_create_file(cur, module_id, file_path)
-        
         # 3. Transaction: Update Ownership
         # Strategy: Snapshot Replacement (Git blame is authoritative)
         
         # Clear old cache for this file to prevent overlaps
-        cur.execute("DELETE FROM line_ownership WHERE file_id = %s", (file_id,))
+        cur.execute("DELETE FROM line_ownership WHERE file_id = %s", (file_id, )) # IMPORTANT: keep the comma to make it of type tuple
         total_lines = 0
-        
         for entry in blame_ranges:
             # Extract Engineer Info
             author_name = entry['commit']['author']['name']
             email = entry['commit']['author']['email'] # Assuming available in query
             engineer_id = get_or_create_engineer(cur, author_name, email)
+            # Extract Reviewer Info
+            reviewers = entry['commit'].get('reviewers', [])
+            reviewer_id = None
+            review_timestamp = None
+            
+            if reviewers:
+                # Find the latest review by submittedAt
+                # Filter out those without submittedAt just in case
+                valid_reviewers = [r for r in reviewers if r.get('submittedAt')]
+                if valid_reviewers:
+                    latest_reviewer = max(valid_reviewers, key=lambda x: x['submittedAt'])
+                    
+                    r_name = latest_reviewer.get('name') or latest_reviewer.get('login')
+                    r_email = latest_reviewer.get('email')
+                    # If email is missing, we might use login as a fallback for unique identification 
+                    # but get_or_create_engineer expects email.
+                    # As a fallback, construct a fake email or skip if critical.
+                    # For now, we'll only proceed if we have an email or can reasonably construct one (e.g. from login)
+                    if not r_email and latest_reviewer.get('login'):
+                        r_email = f"{latest_reviewer['login']}@users.noreply.github.com"
+                    
+                    if r_email:
+                        reviewer_id = get_or_create_engineer(cur, r_name, r_email)
+                        review_timestamp = latest_reviewer['submittedAt']
+
             # Extract Range Info
             start = entry['startingLine']
             end = entry['endingLine'] 
@@ -54,9 +77,9 @@ def process_blame_response(module_id, json_data, file_path):
             
             # Insert into Line Ownership
             cur.execute("""
-                INSERT INTO line_ownership (file_id, engineer_id, line_range, last_updated_commit)
-                VALUES (%s, %s, %s, %s)
-            """, (file_id, engineer_id, pg_range, entry['commit']['oid']))
+                INSERT INTO line_ownership (file_id, engineer_id, line_range, last_updated_commit, reviewer_id, timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (file_id, engineer_id, pg_range, entry['commit']['oid'], reviewer_id, review_timestamp))
             
             # Track max line for total count
             total_lines = max(total_lines, end)
@@ -69,11 +92,11 @@ def process_blame_response(module_id, json_data, file_path):
         recalculate_metrics(cur, file_id, total_lines)
         
         conn.commit()
-        print(f"Successfully processed blame for {file_path}")
+        print(f"Successfully processed blame for {file_path}: file_id {file_id}")
 
     except Exception as e:
         conn.rollback()
-        print(f"Error processing pipeline: {e}")
+        print(f"Error processing blame response for {file_path} in module {module_id}: {e}")
     finally:
         conn.close()
 
@@ -95,13 +118,16 @@ def get_or_create_file(cur, module_id, path):
     cur.execute("SELECT id FROM files WHERE file_path = %s AND module_id = %s", (path, module_id))
     res = cur.fetchone()
     if res:
+        print("fetched file_id = ", res)
         return res[0]
     
     cur.execute("""
         INSERT INTO files (module_id, file_path) VALUES (%s, %s) 
         RETURNING id
     """, (module_id, path))
-    return cur.fetchone()[0]    
+    new_id = cur.fetchone()[0]
+    print("inserted file_id = ", new_id)
+    return new_id
 
 
 def recalculate_metrics(cur, file_id, total_lines):
@@ -115,16 +141,32 @@ def recalculate_metrics(cur, file_id, total_lines):
     
     # Aggregate using Postgres Range functions
     # upper(line_range) - lower(line_range) gives the count of lines
+    # 1. Calculate 'WROTE' metrics
     cur.execute("""
-        INSERT INTO file_ownership_metrics (file_id, engineer_id, lines_owned, lines_owned_percentage)
+        INSERT INTO file_ownership_metrics (file_id, engineer_id, lines_owned, lines_owned_percentage, type)
         SELECT 
             file_id,
             engineer_id,
             SUM(upper(line_range) - lower(line_range)) as lines_owned,
-            (SUM(upper(line_range) - lower(line_range))::FLOAT / %s) * 100 as lines_owned_percentage
+            (SUM(upper(line_range) - lower(line_range))::FLOAT / %s) * 100 as lines_owned_percentage,
+            'WROTE'
         FROM line_ownership
         WHERE file_id = %s
         GROUP BY file_id, engineer_id
+    """, (total_lines, file_id))
+
+    # 2. Calculate 'REVIEWED' metrics
+    cur.execute("""
+        INSERT INTO file_ownership_metrics (file_id, engineer_id, lines_owned, lines_owned_percentage, type)
+        SELECT 
+            file_id,
+            reviewer_id,
+            SUM(upper(line_range) - lower(line_range)) as lines_owned,
+            (SUM(upper(line_range) - lower(line_range))::FLOAT / %s) * 100 as lines_owned_percentage,
+            'REVIEWED'
+        FROM line_ownership
+        WHERE file_id = %s AND reviewer_id IS NOT NULL
+        GROUP BY file_id, reviewer_id
     """, (total_lines, file_id))
     
 

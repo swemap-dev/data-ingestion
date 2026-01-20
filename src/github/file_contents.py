@@ -162,6 +162,7 @@ class FileContentsService:
                             ... on Bot { login }
                           }
                           state
+                          submittedAt
                         }
                       }
                     }
@@ -228,7 +229,9 @@ class FileContentsService:
                                     reviewer_info = {
                                         "name": author.get("name"),
                                         "email": author.get("email"),
-                                        "login": login
+                                        "login": login,
+                                        "submittedAt": review.get("submittedAt"),
+                                        "state": review.get("state")
                                     }
                                     reviewers.append(reviewer_info)
                         
