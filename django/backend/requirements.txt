@@ -1,0 +1,8 @@
+Django>=5.0
+django-ninja
+celery
+redis
+psycopg[binary]
+python-dotenv
+requests
+django-ninja-jwt

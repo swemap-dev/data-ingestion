@@ -1,5 +1,9 @@
 from django.contrib import admin
-from .models import Engineer, Repo, Skill, Module, File, Review, ModuleContribution, FileContribution, ModuleSkill, EngineerSkill, FileDependency
+from .models import (
+    Engineer, Repo, Skill, Module, File, Review, 
+    ModuleContribution, FileContribution, ModuleSkill, 
+    EngineerSkill, FileDependency, LineOwnership, FileOwnershipMetric
+)
 
 # Register your models here.
 admin.site.register(Engineer)
@@ -13,3 +17,5 @@ admin.site.register(FileContribution)
 admin.site.register(ModuleSkill)
 admin.site.register(EngineerSkill)
 admin.site.register(FileDependency)
+admin.site.register(LineOwnership)
+admin.site.register(FileOwnershipMetric)
