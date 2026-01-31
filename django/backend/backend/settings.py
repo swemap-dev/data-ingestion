@@ -16,6 +16,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+
+# GitHub Configuration
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+
+
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -29,7 +38,8 @@ SECRET_KEY = 'django-insecure-ch5hlj_-0l2fbju98__ovh*@4%2mx15*!a=+^&)n)81-i2g)$n
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# TODO: Set ALLOWED_HOSTS in production
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -43,6 +53,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     'git_blame_ingestion_app',
+    'ninja',
 ]
 
 MIDDLEWARE = [
