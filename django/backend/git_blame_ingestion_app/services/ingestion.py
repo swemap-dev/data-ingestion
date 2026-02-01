@@ -233,3 +233,48 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     if len(parts) >= 2:
         return parts[0], parts[1]
     return None, None
+
+def resolve_module_from_db(repo_id: int, file_path: str) -> int:
+    """
+    Finds the correct module ID for a file path by looking for the longest matching
+    directory path in the database.
+    This assumes modules have already been populated.
+    """
+    import os
+    current_dir = os.path.dirname(file_path)
+    if current_dir == "":
+        start_dir = "" # Start at root
+    else:
+        start_dir = current_dir
+
+    # Bottom-up search in DB
+    # We could optimize this by querying all modules for the repo and doing in-memory match
+    # if the number of modules is small. But let's stick to spec logic.
+    
+    # Optimization: Get all module paths for this repo
+    # This avoids repeated DB hits in a loop
+    all_modules = Module.objects.filter(repo_id=repo_id).values_list('dir_path', 'id')
+    module_map = {m[0]: m[1] for m in all_modules} # dir_path -> id
+    
+    search_dir = start_dir
+    while True:
+        if search_dir in module_map:
+            return module_map[search_dir]
+            
+        if search_dir == "":
+            break
+            
+        parent = os.path.dirname(search_dir)
+        if parent == search_dir: # Should not happen with os.path.dirname but safely break
+             break
+        search_dir = parent
+        
+    # Fallback to finding "ROOT" explicitly if it exists in map as "" or "/"?
+    # Spec says "Root_Module". We should have ensured a root module exists.
+    # If our pre-scan adds "" as a module, it will be found above.
+    
+    # If not found, check if a root module exists with empty path
+    if "" in module_map:
+        return module_map[""]
+        
+    return None

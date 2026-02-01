@@ -4,10 +4,22 @@ from django.http import HttpRequest
 import logging
 
 from .tasks import process_commit_blame
+from .models import Module
+from code_ownership.api import router as ownership_router
 
 logger = logging.getLogger(__name__)
 
 api = NinjaAPI()
+api.add_router("/ownership", ownership_router)
+
+class ModuleSchema(Schema):
+    module_id: int
+    module_name: str
+
+@api.get("/modules", response=List[ModuleSchema])
+def get_all_modules(request):
+    modules = Module.objects.all()
+    return [{"module_id": m.id, "module_name": m.name} for m in modules]
 
 class CommitInfo(Schema):
     id: str

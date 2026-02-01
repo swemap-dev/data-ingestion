@@ -54,3 +54,16 @@ Trigger a push to your repo.
 1. **Ngrok**: Shows `POST /api/webhook 200 OK`.
 2. **Django**: Logs `Enqueuing job for...`.
 3. **Celery**: Logs `Processing blame for...`.
+
+
+# Dev
+
+## Clear the Database
+```bash
+python manage.py flush
+```
+
+## Clear the Celery Queue
+```bash
+celery -A backend purge
+```

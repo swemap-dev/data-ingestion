@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     'git_blame_ingestion_app',
+    'code_ownership',
     'ninja',
 ]
 

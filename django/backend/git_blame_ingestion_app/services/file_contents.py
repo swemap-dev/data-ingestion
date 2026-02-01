@@ -361,8 +361,8 @@ class FileContentsService:
         Returns:
             Dict[str, str]: A dictionary mapping file paths to their blob SHAs.
         """
+        # TODO: this GET request has a JSON response limit of 7MB; need ways to handle large repositories
         url = f"{self.base_url}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
-        print(f"GET {url}")
         response = self.session.get(url)
         response.raise_for_status()
 
