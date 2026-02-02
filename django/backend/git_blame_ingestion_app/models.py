@@ -41,6 +41,7 @@ class Engineer(models.Model):
 
 class Repo(models.Model):
     name = models.CharField(max_length=255)
+    owner = models.CharField(max_length=255, default='unknown')
     url = models.CharField(max_length=255, null=True, blank=True)
     language = models.CharField(max_length=100, null=True, blank=True)
     risk_score = models.FloatField(null=True, blank=True)
@@ -49,9 +50,10 @@ class Repo(models.Model):
     class Meta:
         db_table = 'repos'
         managed = True
+        unique_together = ('owner', 'name')
 
     def __str__(self):
-        return self.name
+        return f"{self.owner}/{self.name}"
 
 class Skill(models.Model):
     name = models.CharField(max_length=100, unique=True)

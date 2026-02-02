@@ -93,6 +93,71 @@ def calculate_module_ownership(module_id: int) -> Dict[str, Any]:
         "ownership": ownership_list
     }
 
+# TODO: delete this function
+def list_module_reviewers_random(module_id: int) -> List[Dict[str, Any]]:
+    """
+    Randomly returns a list of 2 writers of a given module_id as reviewers.
+    """
+    import random
+    
+    # Reuse existing logic to get all writers
+    writers = get_module_writers(module_id)
+    
+    # If fewer than 2 writers, return all of them
+    if len(writers) <= 2:
+        return writers
+        
+    # Randomly sample 2
+    return random.sample(writers, 2)
+
+def get_repo_overview(repo_id: int) -> Dict[str, Any]:
+    """
+    Returns a high-level overview of the repository's modules ('services')
+    and their key engineering owners.
+    """
+    from git_blame_ingestion_app.models import Repo, Module, InteractionType
+    
+    try:
+        repo = Repo.objects.get(id=repo_id)
+    except Repo.DoesNotExist:
+        return {"error": "Repository not found"}
+        
+    modules = Module.objects.filter(repo_id=repo_id).exclude(name="") # Exclude internal root if cleaner
+    
+    services_list = []
+    
+    for module in modules:
+        # Get ownership stats for each role
+        # We take the top 1 (index 0) if available
+        
+        # 1. Writer
+        writers = get_module_writers(module.id)
+        writer_name = writers[0]['engineer_name'] if writers else "Unassigned"
+        
+        # 2. Reviewer
+        # TODO: change to get_module_reviewers
+        reviewers = list_module_reviewers_random(module.id)
+        reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
+        
+        # 3. Designer
+        # Checking for explicit DESIGNED interaction
+        designers = _get_module_ownership_stats(module.id, InteractionType.DESIGNED)
+        designer_name = designers[0]['engineer_name'] if designers else "Unassigned"
+        
+        services_list.append({
+            "name": module.name,
+            "designer": designer_name,
+            "writer": writer_name,
+            "reviewer": reviewer_name
+        })
+        
+    return {
+        "repo": {
+            "name": repo.name,
+            "services": services_list
+        }
+    }
+
 if __name__ == "__main__":
     # Setup Django Environment
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -104,4 +169,4 @@ if __name__ == "__main__":
     parser.add_argument("module_id", type=int, help="Module ID")
     args = parser.parse_args()
     
-    print(calculate_module_ownership(args.module_id))
+    print(list_module_reviewers_random(args.module_id))

@@ -60,10 +60,20 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
             changed_files = commit.added + commit.modified
             
             for fpath in changed_files:
-                print(f"Enqueuing job for {owner}/{name} {fpath}")
-                logger.info(f"Enqueuing job for {owner}/{name} {fpath}")
-                process_commit_blame.delay(owner, name, commit_hash, fpath)
-                enqueued_count += 1
+                # Security Check: Only process if we know this repo
+                # This prevents "leakage" where we process webhooks for random repos 
+                # that just happen to point to our webhook URL
+                from .models import Repo
+                try:
+                    repo = Repo.objects.get(owner=owner, name=name)
+                    print(f"Enqueuing job for {owner}/{name} {fpath}")
+                    logger.info(f"Enqueuing job for {owner}/{name} {fpath}")
+                    process_commit_blame.delay(owner, name, commit_hash, fpath)
+                    enqueued_count += 1
+                except Repo.DoesNotExist:
+                     print(f"Skipping webhook for unknown repo: {owner}/{name}")
+                     logger.warning(f"Skipping webhook for unknown repo: {owner}/{name}")
+                     continue
                 
         return {"status": "processing", "jobs_enqueued": enqueued_count}
         

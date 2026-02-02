@@ -46,8 +46,10 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         
         # Determine Module ID using the DB resolver helper
         # Logic: Find the longest matching directory path that is a registered module.
+        # FIX: Including owner in lookup to avoid collisions
         repo_obj, _ = Repo.objects.get_or_create(
             name=repo_name,
+            owner=repo_owner,
             defaults={'url': f"https://github.com/{repo_owner}/{repo_name}"}
         )
         
@@ -107,6 +109,7 @@ def initialize(repo_url):
         from .models import Repo
         repo_obj, _ = Repo.objects.get_or_create(
             name=name,
+            owner=owner,
             defaults={'url': repo_url}
         )
         
@@ -128,8 +131,9 @@ def initialize(repo_url):
             try:
                 # Upsert module using ingestion service
                 # Name will be the dir path (empty string for root)
+                if d == "": continue
                 name_for_module = d if d else "ROOT"
-                ingestion.get_or_create_module(repo_obj.id, d, d)
+                ingestion.get_or_create_module(repo_obj.id, name_for_module, d)
             except Exception as e:
                 logger.error(f"Error creating module {d} for {owner}/{name}: {e}")
 
