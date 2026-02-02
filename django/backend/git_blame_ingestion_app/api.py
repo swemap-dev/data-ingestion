@@ -18,7 +18,9 @@ class ModuleSchema(Schema):
 
 @api.get("/modules", response=List[ModuleSchema])
 def get_all_modules(request):
-    modules = Module.objects.all()
+    # TODO: a module with empty 'module_name' somehow got added to the DB; hardcode filter for now
+    # modules = Modules.objects.all()
+    modules = Module.objects.exclude(name__isnull=True).exclude(name__exact='')
     return [{"module_id": m.id, "module_name": m.name} for m in modules]
 
 class CommitInfo(Schema):

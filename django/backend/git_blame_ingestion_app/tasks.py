@@ -115,6 +115,7 @@ def initialize(repo_url):
         
         # Get set of all module root directories
         module_roots = resolver.known_modules
+        logger.info(f"Found {len(module_roots)} functional modules to initialize for {owner}/{name}")
         
         # Ensure ROOT module is present (ModuleResolver logic might have it or not depending on markers)
         # But for our DB, we want an entry for the root if files fall back to it.
