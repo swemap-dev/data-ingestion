@@ -3,7 +3,7 @@ from ninja import NinjaAPI, Schema
 from django.http import HttpRequest
 import logging
 
-from .tasks import process_commit_blame
+from .tasks import process_commit_blame, initialize_all
 from .models import Module
 from code_ownership.api import router as ownership_router
 
@@ -22,6 +22,18 @@ def get_all_modules(request):
     # modules = Modules.objects.all()
     modules = Module.objects.exclude(name__isnull=True).exclude(name__exact='')
     return [{"module_id": m.id, "module_name": m.name} for m in modules]
+
+class RepoSchema(Schema):
+    id: int
+    name: str
+    owner: str
+    url: Optional[str] = None
+
+@api.get("/repos", response=List[RepoSchema])
+def get_all_repos(request):
+    from .models import Repo
+    repos = Repo.objects.all()
+    return list(repos)
 
 class CommitInfo(Schema):
     id: str
@@ -78,3 +90,11 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         return {"status": "processing", "jobs_enqueued": enqueued_count}
         
     return {"status": "ignored", "reason": f"Event {event} not handled"}
+
+@api.post("/init-all")
+def init_all(request):
+    """
+    Triggers initialization for all default repositories.
+    """
+    result = initialize_all.delay()
+    return {"status": "triggered", "task_id": result.id}

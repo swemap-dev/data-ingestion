@@ -144,3 +144,20 @@ def initialize(repo_url):
             
     except Exception as e:
         logger.error(f"Initialization failed for {repo_url}: {e}")
+
+@shared_task
+def initialize_all():
+    """
+    Initializes a set of default repositories.
+    """
+    repos = [
+        'https://github.com/justin-chung-swemap/swemap-demo',
+        'https://github.com/justin-chung-swemap/payment-platform',
+        'https://github.com/justin-chung-swemap/data-infrastructure'
+    ]
+    
+    for url in repos:
+        logger.info(f"Triggering initialization for {url}")
+        initialize.delay(url)
+    
+    return {"status": "queued", "repos": repos}
