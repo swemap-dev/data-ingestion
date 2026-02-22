@@ -32,7 +32,7 @@ Ensure you are in the `django/backend` directory and have your environment activ
 ## 1. Start Up Sequence (Run in separate terminals)
 
 ### Terminal A: Celery Worker
-This processes the background jobs.
+This processes the background jobs (Make sure Docker is up and running).
 ```bash
 # Must be run from django/backend/ directory
 celery -A backend worker -l info
@@ -76,4 +76,29 @@ python manage.py flush
 ## Clear the Celery Queue
 ```bash
 celery -A backend purge
+```
+
+## Run Management Command
+Navigate to `django/backend/` directory.
+
+Clears all application data:
+```bash
+python manage.py clear_app_data
+```
+Run initialization pass for all demo repo:
+```bash
+python manage.py init_repo "https://github.com/justin-chung-swemap/swemap-demo"
+```
+
+## Run Tests
+Grant permission to postgres user to create database:
+```bash
+psql -U postgres -c "ALTER USER <YOUR_DB_USER> CREATEDB;"
+```
+In `django/backend` directory, run the tests of an app:
+```bash
+python manage.py test <app_name>
+
+# Example: 
+python manage.py test git_blame_ingestion_app
 ```
