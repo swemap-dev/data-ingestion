@@ -6,11 +6,13 @@ import logging
 from .tasks import process_commit_blame, initialize_all
 from .models import Module
 from code_ownership.api import router as ownership_router
+from risk_dashboard.api import router as risk_router
 
 logger = logging.getLogger(__name__)
 
 api = NinjaAPI()
 api.add_router("/ownership", ownership_router)
+api.add_router("/risk", risk_router)
 
 class ModuleSchema(Schema):
     module_id: int
@@ -22,6 +24,17 @@ def get_all_modules(request):
     # modules = Modules.objects.all()
     modules = Module.objects.exclude(name__isnull=True).exclude(name__exact='')
     return [{"module_id": m.id, "module_name": m.name} for m in modules]
+
+class FileSchema(Schema):
+    id: int
+    file_path: str
+    line_count: Optional[int] = None
+
+@api.get("/modules/{module_id}/files", response=List[FileSchema])
+def get_module_files(request, module_id: int):
+    from .models import File
+    files = File.objects.filter(module_id_id=module_id)
+    return list(files)
 
 class RepoSchema(Schema):
     id: int
@@ -65,32 +78,48 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         except ValueError:
             return api.create_response(request, {"error": "Invalid repo name format"}, status=400)
             
+        from .models import Repo
+        try:
+            repo = Repo.objects.get(owner=owner, name=name)
+        except Repo.DoesNotExist:
+            return api.create_response(request, {"error": "Unknown repo"}, status=404)
+            
         enqueued_count = 0
         
         for commit in payload.commits:
             commit_hash = commit.id
             changed_files = commit.added + commit.modified
             
+            # Create any new modules introduced in this commit
+            import os
+            from .services.module_resolver import ModuleResolver
+            from .services import ingestion
+            
+            new_modules = set()
             for fpath in changed_files:
-                # Security Check: Only process if we know this repo
-                # This prevents "leakage" where we process webhooks for random repos 
-                # that just happen to point to our webhook URL
-                from .models import Repo
-                try:
-                    repo = Repo.objects.get(owner=owner, name=name)
-                    print(f"Enqueuing job for {owner}/{name} {fpath}")
-                    logger.info(f"Enqueuing job for {owner}/{name} {fpath}")
-                    process_commit_blame.delay(owner, name, commit_hash, fpath)
-                    enqueued_count += 1
-                except Repo.DoesNotExist:
-                     print(f"Skipping webhook for unknown repo: {owner}/{name}")
-                     logger.warning(f"Skipping webhook for unknown repo: {owner}/{name}")
-                     continue
+                dirname, basename = os.path.split(fpath)
+                if basename in ModuleResolver.MODULE_MARKERS:
+                    resolver = ModuleResolver([]) # Dummy instance just to check ignored dirs
+                    if not resolver._is_ignored(dirname):
+                        new_modules.add(dirname)
+                        
+            for d in new_modules:
+                name_for_module = d if d else "ROOT"
+                logger.info(f"Webhook detected new module marker in '{name_for_module}'. Creating preemptively.")
+                ingestion.get_or_create_module(repo.id, name_for_module, d)
+            
+            # Enqueue file blame tasks
+            for fpath in changed_files:
+                print(f"Enqueuing job for {owner}/{name} {fpath}")
+                logger.info(f"Enqueuing job for {owner}/{name} {fpath}")
+                process_commit_blame.delay(owner, name, commit_hash, fpath)
+                enqueued_count += 1
                 
         return {"status": "processing", "jobs_enqueued": enqueued_count}
         
     return {"status": "ignored", "reason": f"Event {event} not handled"}
 
+# TODO: the repos in initialize_all() are hardcoded; change to be configurable
 @api.post("/init-all")
 def init_all(request):
     """

@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'git_blame_ingestion_app',
     'code_ownership',
+    'risk_dashboard',
     'ninja',
     "corsheaders",
 ]
@@ -143,3 +144,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Risk Dashboard Configuration
+RISK_CONFIG = {
+    "BUS_FACTOR_THRESHOLD": 90.0,
+    "ABANDONED_CODE_THRESHOLD": 30.0,
+    "ABANDONED_INACTIVE_DAYS": 90,
+    "HEALTHY_SILO_TOP_MIN": 50.0,
+    "HEALTHY_SILO_TOP_MAX": 70.0,
+    "HEALTHY_SILO_OTHER_MIN": 10.0,
+    "HEALTHY_SILO_OTHER_MAX": 20.0,
+}

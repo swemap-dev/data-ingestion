@@ -88,13 +88,14 @@ class Module(models.Model):
         indexes = [
             models.Index(fields=['name'], name='idx_modules_name'),
         ]
+        unique_together = ('repo', 'name')
         managed = True
 
     def __str__(self):
         return self.name if self.name else "Unnamed Module"
 
 class File(models.Model):
-    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='files')
+    module_id = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='files', db_column='module_id')
     file_path = models.CharField(max_length=512)
     checksum = models.CharField(max_length=255, null=True, blank=True)
     line_count = models.IntegerField(null=True, blank=True)
@@ -119,38 +120,7 @@ class Review(models.Model):
 
 # 4. Join Tables / Complex Relationships
 
-class ModuleContribution(models.Model):
-    engineer = models.ForeignKey(Engineer, on_delete=models.CASCADE)
-    module = models.ForeignKey(Module, on_delete=models.CASCADE)
-    interaction_type = models.CharField(
-        max_length=50,
-        choices=InteractionType.choices,
-        null=True,
-        blank=True
-    )
 
-    class Meta:
-        db_table = 'module_contributions'
-        unique_together = ('engineer', 'module', 'interaction_type')
-        indexes = [
-            models.Index(fields=['module', 'interaction_type'], name='idx_contributions_module_id'),
-        ]
-        managed = True
-
-class FileContribution(models.Model):
-    engineer = models.ForeignKey(Engineer, on_delete=models.CASCADE)
-    file = models.ForeignKey(File, on_delete=models.CASCADE)
-    interaction_type = models.CharField(
-        max_length=50,
-        choices=InteractionType.choices,
-        null=True,
-        blank=True
-    )
-
-    class Meta:
-        db_table = 'file_contributions'
-        unique_together = ('engineer', 'file', 'interaction_type')
-        managed = True
 
 class ModuleSkill(models.Model):
     module = models.ForeignKey(Module, on_delete=models.CASCADE)
@@ -203,6 +173,22 @@ class FileOwnershipMetric(models.Model):
     class Meta:
         db_table = 'file_ownership_metrics'
         unique_together = ('file', 'engineer', 'type')
+        managed = True
+
+class ModuleOwnershipMetric(models.Model):
+    module = models.ForeignKey(Module, on_delete=models.CASCADE)
+    engineer = models.ForeignKey(Engineer, on_delete=models.CASCADE)
+    lines_owned = models.IntegerField(default=0)
+    lines_owned_percentage = models.FloatField(null=True, blank=True)
+    commit_count = models.IntegerField(default=0)
+    type = models.CharField(
+        max_length=50,
+        choices=InteractionType.choices
+    )
+
+    class Meta:
+        db_table = 'module_ownership_metrics'
+        unique_together = ('module', 'engineer', 'type')
         managed = True
 
 class LineOwnership(models.Model):

@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from git_blame_ingestion_app.models import (
     Repo, Module, File, Engineer, LineOwnership, 
-    FileOwnershipMetric, ModuleContribution, FileContribution,
+    FileOwnershipMetric,
     ModuleSkill, EngineerSkill, FileDependency, Review
 )
 
@@ -19,8 +19,7 @@ class Command(BaseCommand):
             # Metrics and Ownership
             LineOwnership.objects.all().delete()
             FileOwnershipMetric.objects.all().delete()
-            ModuleContribution.objects.all().delete()
-            FileContribution.objects.all().delete()
+
             ModuleSkill.objects.all().delete()
             EngineerSkill.objects.all().delete()
             FileDependency.objects.all().delete()

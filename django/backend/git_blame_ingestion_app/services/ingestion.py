@@ -7,7 +7,7 @@ from psycopg.types.range import Range as NumericRange
 
 from ..models import (
     File, Engineer, LineOwnership, FileOwnershipMetric, 
-    Repo, Module, InteractionType
+    Repo, Module, InteractionType, ModuleOwnershipMetric
 )
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str):
         # 2. Get or Create File
         # Assuming module_id is valid.
         file_obj, created = File.objects.get_or_create(
-            module_id=module_id, 
+            module_id_id=module_id, 
             file_path=file_path, 
             defaults={'line_count': 0}
         )
@@ -204,13 +204,26 @@ def recalculate_metrics(file_id: int, total_lines: int):
         FileOwnershipMetric.objects.bulk_create(metrics_to_create)
 
 def get_or_create_module(repo_id: int, name: str, dir_path: str) -> Module:
-    """Upserts module and returns Object"""
-    module, created = Module.objects.get_or_create(
-        repo_id=repo_id,
-        name=name,
-        defaults={'dir_path': dir_path}
-    )
-    return module
+    """Upserts module and returns Object securely against race conditions."""
+    from django.db import IntegrityError, transaction
+
+    try:
+        # We need an atomic block here so an IntegrityError doesn't break an outer transaction
+        with transaction.atomic():
+            module, created = Module.objects.get_or_create(
+                repo_id=repo_id,
+                name=name,
+                defaults={'dir_path': dir_path}
+            )
+            return module
+    except IntegrityError:
+        # If another worker created it concurrently, get_or_create might fail on INSERT
+        # before 'created' is returned, we just catch the exception and get it.
+        return Module.objects.get(repo_id=repo_id, name=name)
+
+def get_module(repo_id: int, name: str) -> Module:
+    """Returns a module or raises Module.DoesNotExist if not found."""
+    return Module.objects.get(repo_id=repo_id, name=name)
 
 def get_module_id(repo_id: int, dir_path: str) -> int:
     """Returns module ID for a directory path, or None if not found"""
@@ -278,3 +291,58 @@ def resolve_module_from_db(repo_id: int, file_path: str) -> int:
         return module_map[""]
         
     return None
+
+def calculate_module_metrics(module_id: int):
+    """
+    Aggregates FileOwnershipMetrics to calculate ModuleOwnershipMetrics.
+    """
+    
+    # 1. Get all files in module
+    files = File.objects.filter(module_id_id=module_id)
+    file_ids = files.values_list('id', flat=True)
+    
+    if not file_ids:
+        return
+
+    # 2. Calculate total lines in module
+    # We can sum file.line_count. 
+    # Note: file.line_count is updated in process_blame_response
+    module_total_lines = files.aggregate(total=Sum('line_count'))['total'] or 0
+    
+    if module_total_lines == 0:
+        return
+
+    # 3. Aggregate FileOwnershipMetrics
+    # Group by engineer and type
+    metrics_attrs = (
+        FileOwnershipMetric.objects.filter(file_id__in=file_ids)
+        .values('engineer_id', 'type')
+        .annotate(
+            total_lines_owned=Sum('lines_owned')
+        )
+    )
+    
+    # 4. Prepare bulk create/update
+    # We should clear old metrics for this module to avoid stale data
+    ModuleOwnershipMetric.objects.filter(module_id=module_id).delete()
+    
+    new_metrics = []
+    
+    for m in metrics_attrs:
+        lines_owned = m['total_lines_owned'] or 0
+        percentage = (float(lines_owned) / module_total_lines) * 100
+        
+        new_metrics.append(
+            ModuleOwnershipMetric(
+                module_id=module_id,
+                engineer_id=m['engineer_id'],
+                type=m['type'],
+                lines_owned=lines_owned,
+                lines_owned_percentage=percentage,
+                commit_count=0 # TODO: Aggregate commit counts if needed
+            )
+        )
+        
+    if new_metrics:
+        ModuleOwnershipMetric.objects.bulk_create(new_metrics)
+

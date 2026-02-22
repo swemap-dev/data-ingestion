@@ -157,16 +157,3 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
             "services": services_list
         }
     }
-
-if __name__ == "__main__":
-    # Setup Django Environment
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.path.append(base_dir)
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
-    django.setup()
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("module_id", type=int, help="Module ID")
-    args = parser.parse_args()
-    
-    print(list_module_reviewers_random(args.module_id))

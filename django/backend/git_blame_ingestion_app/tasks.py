@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from celery import shared_task
+from celery import shared_task, chord
 from django.conf import settings
 
 from .services.client import GitHubClient
@@ -30,11 +30,6 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         client = get_shared_client()
         service = FileContentsService(client)
         
-        # We generally blame 'main' or the specific commit?
-        # If we blame the specific commit, use commit_hash (SHA) as ref.
-        # However, GraphQL blame usually works best with a Branch Name or Commit SHA.
-        # "ref" in get_raw_blame logic is used for QualifiedName or SHA.
-        
         blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref='main') # TODO: include other branches
         
         if not blame_data:
@@ -46,7 +41,6 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         
         # Determine Module ID using the DB resolver helper
         # Logic: Find the longest matching directory path that is a registered module.
-        # FIX: Including owner in lookup to avoid collisions
         repo_obj, _ = Repo.objects.get_or_create(
             name=repo_name,
             owner=repo_owner,
@@ -55,18 +49,15 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         
         module_id = ingestion.resolve_module_from_db(repo_obj.id, file_path)
         
+        # If no module is found, this file belongs to the ROOT module
         if not module_id:
-            # Fallback (should typically find ROOT if initialized properly)
-            # If resolve returning None despite root being present, it might be a new file in a path not covered?
-            # Or root module is missing.
-            logger.warning(f"Could not resolve module for {file_path}. Falling back to dynamic creation (legacy behavior) or skipping.")
-            # For robustness, let's create a directory-based module if resolution fails, or just log error?
-            # Spec says "Fallback: ... Root_Module".
-            # If resolve_module_from_db returns None, it means even ROOT wasn't found in DB.
-            # Let's try to ensure we have a module.
-            dir_path = os.path.dirname(file_path)
-            module_obj = ingestion.get_or_create_module(repo_obj.id, dir_path, dir_path)
-            module_id = module_obj.id
+            logger.warning(f"Could not resolve module for {file_path}. Falling back to ROOT module.")
+            try:
+                module_obj = ingestion.get_module(repo_obj.id, "ROOT")
+                module_id = module_obj.id
+            except ingestion.Module.DoesNotExist:
+                logger.error(f"ROOT module not found for repo {repo_owner}/{repo_name}. Cannot process file {file_path}")
+                return
         
         ingestion.process_blame_response(module_id, blame_data, file_path)
         
@@ -131,20 +122,27 @@ def initialize(repo_url):
             try:
                 # Upsert module using ingestion service
                 # Name will be the dir path (empty string for root)
-                if d == "": continue
                 name_for_module = d if d else "ROOT"
                 ingestion.get_or_create_module(repo_obj.id, name_for_module, d)
             except Exception as e:
                 logger.error(f"Error creating module {d} for {owner}/{name}: {e}")
 
         
-        # Enqueue jobs
-        for fpath in file_paths:
-            process_commit_blame.delay(owner, name, commit_sha, fpath)
+        # Enqueue jobs using Chord
+        tasks = [
+            process_commit_blame.s(owner, name, commit_sha, fpath)
+            for fpath in file_paths
+        ]
+        
+        # Chord: executing a group of tasks (header) and then a callback (body)
+        chord(tasks)(finalize_repo_ingestion.si(repo_obj.id))
+        
+        logger.info(f"Queued {len(tasks)} blame tasks for {owner}/{name}")
             
     except Exception as e:
         logger.error(f"Initialization failed for {repo_url}: {e}")
 
+# TODO: Remove this after testing
 @shared_task
 def initialize_all():
     """
@@ -161,3 +159,24 @@ def initialize_all():
         initialize.delay(url)
     
     return {"status": "queued", "repos": repos}
+
+@shared_task
+def finalize_repo_ingestion(repo_id):
+    """
+    Callback task that runs after all file blame tasks are complete.
+    Triggers module metrics calculation.
+    """
+    logger.info(f"All files processed for repo {repo_id}. Starting module metrics calculation.")
+    
+    try:
+        from .models import Module
+        modules = Module.objects.filter(repo_id=repo_id)
+        
+        for module in modules:
+            logger.info(f"Calculating metrics for module {module.id} ({module.name})")
+            ingestion.calculate_module_metrics(module.id)
+            
+        logger.info(f"Module metrics calculation complete for repo {repo_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in finalize_repo_ingestion for repo {repo_id}: {e}")

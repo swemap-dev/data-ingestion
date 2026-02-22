@@ -16,9 +16,9 @@ class ModuleAnalyticsTest(TestCase):
         
         # Create Files
         # File 1: 100 lines
-        self.file1 = File.objects.create(module=self.module, file_path="test/module/file1.py", line_count=100)
+        self.file1 = File.objects.create(module_id=self.module, file_path="test/module/file1.py", line_count=100)
         # File 2: 200 lines
-        self.file2 = File.objects.create(module=self.module, file_path="test/module/file2.py", line_count=200)
+        self.file2 = File.objects.create(module_id=self.module, file_path="test/module/file2.py", line_count=200)
         
         # Total Module Lines = 300
         
