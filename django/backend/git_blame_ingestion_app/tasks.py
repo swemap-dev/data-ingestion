@@ -1,11 +1,13 @@
 import logging
 import os
-from celery import shared_task
+import time
+from celery import shared_task, chord
 from django.conf import settings
 
 from .services.client import GitHubClient
 from .services.file_contents import FileContentsService
 from .services import ingestion
+from .models import Repo
 
 logger = logging.getLogger(__name__)
 
@@ -28,56 +30,39 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         client = get_shared_client()
         service = FileContentsService(client)
         
-        # We generally blame 'main' or the specific commit?
-        # If we blame the specific commit, use commit_hash (SHA) as ref.
-        # However, GraphQL blame usually works best with a Branch Name or Commit SHA.
-        # "ref" in get_raw_blame logic is used for QualifiedName or SHA.
-        
         blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref='main') # TODO: include other branches
-        print(blame_data)
         
         if not blame_data:
             logger.warning(f"No blame data returned for {file_path} (possibly empty or GraphQL error)")
             return
             
-        # Determine Module ID
-        dir_path = os.path.dirname(file_path)
         
-        # We need repo_id. 
-        # Ideally, we should pass repo_id or look it up.
-        # For MVP, we can lookup repo check if exists.
-        # But for ingestion.process_blame_response, it expects module_id.
+        start_time = time.time()
         
-        # Let's find repo_id first.
-        # Optimization: We could pass repo_id in the task args, but let's lookup.
-        # For now, let's assume we have a function or query.
-        from .models import Repo
-        # We can implement a helper or just query.
-        # Assuming Repo exists (created by initialize or hook receiver).
-        # We'll rely on the hook/initializer to have created the Repo.
-        repo_obj = Repo.objects.filter(name=repo_name).first() # Name might not be unique if different owners?
-        # Actually Repo model has 'url'.
-        # Let's just create/get Repo by name/owner logic?
-        # Current model has 'name' and 'url'.
-        # Let's assume name is "repo_name" (short) or "owner/repo_name"?
-        # Flask logic used `url` to find repos.
-        
-        # Let's simplify: In the future we pass IDs. 
-        # For now, let's try to find module_id.
-        # If we can't find repo, we might need to create it?
-        
-        # In `process_blame_response`, we need module_id.
-        # Let's use `ingestion.get_or_create_module`.
-        # But we need repo_id.
-        
+        # Determine Module ID using the DB resolver helper
+        # Logic: Find the longest matching directory path that is a registered module.
         repo_obj, _ = Repo.objects.get_or_create(
             name=repo_name,
+            owner=repo_owner,
             defaults={'url': f"https://github.com/{repo_owner}/{repo_name}"}
         )
         
-        module_obj = ingestion.get_or_create_module(repo_obj.id, dir_path, dir_path)
+        module_id = ingestion.resolve_module_from_db(repo_obj.id, file_path)
         
-        ingestion.process_blame_response(module_obj.id, blame_data, file_path)
+        # If no module is found, this file belongs to the ROOT module
+        if not module_id:
+            logger.warning(f"Could not resolve module for {file_path}. Falling back to ROOT module.")
+            try:
+                module_obj = ingestion.get_module(repo_obj.id, "ROOT")
+                module_id = module_obj.id
+            except ingestion.Module.DoesNotExist:
+                logger.error(f"ROOT module not found for repo {repo_owner}/{repo_name}. Cannot process file {file_path}")
+                return
+        
+        ingestion.process_blame_response(module_id, blame_data, file_path)
+        
+        duration = time.time() - start_time
+        logger.info(f"Task finished in {duration:.2f}s for {file_path}")
         
     except Exception as e:
         logger.error(f"Task failed: {e}")
@@ -88,7 +73,7 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
              logger.error("Max retries exceeded for task.")
 
 @shared_task
-def initialize_repo(repo_url):
+def initialize(repo_url):
     """
     Initializes a repo by iterating all files and queuing jobs.
     """
@@ -108,7 +93,6 @@ def initialize_repo(repo_url):
         
         # Get Commit SHA
         commit_sha, _, _ = service._get_tree_sha(owner, name, ref)
-        
         file_paths = service.get_all_file_paths(owner, name, ref)
         logger.info(f"Found {len(file_paths)} files in {owner}/{name}")
         
@@ -116,12 +100,83 @@ def initialize_repo(repo_url):
         from .models import Repo
         repo_obj, _ = Repo.objects.get_or_create(
             name=name,
+            owner=owner,
             defaults={'url': repo_url}
         )
         
-        # Enqueue jobs
-        for fpath in file_paths:
-            process_commit_blame.delay(owner, name, commit_sha, fpath)
+        from .services.module_resolver import ModuleResolver
+        resolver = ModuleResolver(file_paths)
+        
+        # Get set of all module root directories
+        module_roots = resolver.known_modules
+        logger.info(f"Found {len(module_roots)} functional modules to initialize for {owner}/{name}")
+        
+        # Ensure ROOT module is present (ModuleResolver logic might have it or not depending on markers)
+        # But for our DB, we want an entry for the root if files fall back to it.
+        # resolve_module logic falls back to ""; let's ensure "" is a module.
+        module_roots.add("") 
+        
+        logger.info(f"Found {len(module_roots)} functional modules to initialize for {owner}/{name}")
+
+        for d in module_roots:
+            try:
+                # Upsert module using ingestion service
+                # Name will be the dir path (empty string for root)
+                name_for_module = d if d else "ROOT"
+                ingestion.get_or_create_module(repo_obj.id, name_for_module, d)
+            except Exception as e:
+                logger.error(f"Error creating module {d} for {owner}/{name}: {e}")
+
+        
+        # Enqueue jobs using Chord
+        tasks = [
+            process_commit_blame.s(owner, name, commit_sha, fpath)
+            for fpath in file_paths
+        ]
+        
+        # Chord: executing a group of tasks (header) and then a callback (body)
+        chord(tasks)(finalize_repo_ingestion.si(repo_obj.id))
+        
+        logger.info(f"Queued {len(tasks)} blame tasks for {owner}/{name}")
             
     except Exception as e:
         logger.error(f"Initialization failed for {repo_url}: {e}")
+
+# TODO: Remove this after testing
+@shared_task
+def initialize_all():
+    """
+    Initializes a set of default repositories.
+    """
+    repos = [
+        'https://github.com/justin-chung-swemap/swemap-demo',
+        'https://github.com/justin-chung-swemap/payment-platform',
+        'https://github.com/justin-chung-swemap/data-infrastructure'
+    ]
+    
+    for url in repos:
+        logger.info(f"Triggering initialization for {url}")
+        initialize.delay(url)
+    
+    return {"status": "queued", "repos": repos}
+
+@shared_task
+def finalize_repo_ingestion(repo_id):
+    """
+    Callback task that runs after all file blame tasks are complete.
+    Triggers module metrics calculation.
+    """
+    logger.info(f"All files processed for repo {repo_id}. Starting module metrics calculation.")
+    
+    try:
+        from .models import Module
+        modules = Module.objects.filter(repo_id=repo_id)
+        
+        for module in modules:
+            logger.info(f"Calculating metrics for module {module.id} ({module.name})")
+            ingestion.calculate_module_metrics(module.id)
+            
+        logger.info(f"Module metrics calculation complete for repo {repo_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in finalize_repo_ingestion for repo {repo_id}: {e}")

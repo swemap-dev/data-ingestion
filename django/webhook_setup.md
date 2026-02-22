@@ -18,8 +18,18 @@ Ensure you are in the `django/backend` directory and have your environment activ
     python manage.py makemigrations
     python manage.py migrate
     ```
+5. **Create .env Files**:
+    The file should include the following fields:
+    ```
+    DB_NAME='YOUR_POSTGRES_DB_NAME'
+    DB_USER='YOUR_POSTGRES_USER_NAME'
+    DB_PASSWORD='YOUR_POSTGRES_PASSWORD'
+    CELERY_BROKER_URL='redis://localhost:6379/0'
+    CELERY_RESULT_BACKEND='redis://localhost:6379/0'
+    GITHUB_TOKEN="YOUR_GITHUB_TOKEN"
+    ```
 
-## 1. Startup Sequence (Run in separate terminals)
+## 1. Start Up Sequence (Run in separate terminals)
 
 ### Terminal A: Celery Worker
 This processes the background jobs.
@@ -54,3 +64,16 @@ Trigger a push to your repo.
 1. **Ngrok**: Shows `POST /api/webhook 200 OK`.
 2. **Django**: Logs `Enqueuing job for...`.
 3. **Celery**: Logs `Processing blame for...`.
+
+
+# Dev
+
+## Clear the Database
+```bash
+python manage.py flush
+```
+
+## Clear the Celery Queue
+```bash
+celery -A backend purge
+```

@@ -6,3 +6,4 @@ psycopg[binary]
 python-dotenv
 requests
 django-ninja-jwt
+django-cors-headers
