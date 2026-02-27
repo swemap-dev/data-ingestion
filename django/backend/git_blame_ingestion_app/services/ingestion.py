@@ -21,7 +21,7 @@ class Lower(Func):
     output_field = IntegerField()
 
 @transaction.atomic
-def process_blame_response(module_id: int, json_data: dict, file_path: str):
+def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_summary: dict = None):
     """
     Ingests the GraphQL response and updates the DB.
     """
@@ -46,6 +46,10 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str):
             defaults={'line_count': 0}
         )
         file_id = file_obj.id
+
+        if ast_summary is not None:
+            file_obj.ast_summary = ast_summary
+            file_obj.save(update_fields=['ast_summary'])
 
         # 3. Update Ownership
         # Strategy: Snapshot Replacement (Git blame is authoritative)

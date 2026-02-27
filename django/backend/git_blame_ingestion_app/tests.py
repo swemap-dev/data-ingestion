@@ -142,3 +142,110 @@ class IngestionServiceTests(TestCase):
         self.assertEqual(result, mock_module)
         mock_get_or_create.assert_called_once()
         mock_get.assert_called_once_with(repo_id=self.repo.id, name="concurrent_mod")
+
+class BrainFileE2ETests(TestCase):
+    def setUp(self):
+        # 60 lines to bypass the LINES_THRESHOLD=50 rule
+        self.mock_brain_content = b"def brain():\n" + b"".join([b"    pass\n" for _ in range(60)])
+        self.mock_dep_content = b"import src.utils\ndef dep():\n    pass\n"
+        
+        self.file_paths = [
+            "src/requirements.txt",
+            "src/utils.py",
+            "src/a.py",
+            "src/b.py",
+            "src/c.py",
+            "src/d.py",
+        ]
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch('git_blame_ingestion_app.tasks.get_shared_client')
+    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.GitHubClient')
+    def test_e2e_initialize_and_webhook_brain_file(self, mock_gh_client, mock_service_class, mock_get_client):
+        # 1. Setup mocks
+        mock_client = MagicMock()
+        mock_gh_client.return_value = mock_client
+        mock_get_client.return_value = mock_client
+        mock_client.get_repository.return_value.default_branch = 'main'
+        
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._get_tree_sha.return_value = ('sha123', None, None)
+        mock_service.get_all_file_paths.return_value = self.file_paths
+        
+        def fake_get_content(owner, repo, file_path, ref="main"):
+            if "utils.py" in file_path:
+                return self.mock_brain_content
+            return self.mock_dep_content
+        mock_service.get_file_content.side_effect = fake_get_content
+        
+        # Valid dummy blame response
+        mock_service.get_raw_blame.return_value = {
+            "data": {
+                "repository": {
+                    "ref": {
+                        "target": {
+                            "blame": {
+                                "ranges": [
+                                    {"startingLine": 1, "endingLine": 1, "age": 1, "commit": {"oid": "abc", "author": {"user": {"login": "test"}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        # 2. Run initialize using a fake chord to ensure synchronous execution
+        from git_blame_ingestion_app.tasks import initialize
+        with patch('git_blame_ingestion_app.tasks.chord') as mock_chord:
+            def fake_chord(tasks):
+                for task in tasks:
+                    task.apply()
+                def callback_runner(callback):
+                    callback.apply()
+                return callback_runner
+            mock_chord.side_effect = fake_chord
+            
+            initialize("https://github.com/test-owner/test-repo")
+
+        # 3. Verify Repo and DB state
+        from git_blame_ingestion_app.models import Repo, Module, File
+        repo = Repo.objects.get(owner="test-owner", name="test-repo")
+        module = Module.objects.get(repo=repo, name="src")
+        
+        # Assert file count is 6 (requirements.txt + utils + a,b,c,d)
+        self.assertEqual(File.objects.filter(module_id=module.id).count(), 6)
+        
+        brain_file = File.objects.get(module_id=module.id, file_path="src/utils.py")
+        
+        self.assertTrue(brain_file.is_brain_file, "utils.py should be flagged as a brain file based on threshold config")
+        self.assertEqual(brain_file.inbound_coupling, 4)
+        
+        # 4. Test webhook incremental update
+        # We simulate a new webhook that adds 'src/e.py' which also imports 'src/utils.py'
+        self.file_paths.append("src/e.py")
+        payload = {
+            "repository": {"full_name": "test-owner/test-repo"},
+            "commits": [
+                {
+                    "id": "new_commit_hash",
+                    "added": ["src/e.py"],
+                    "modified": []
+                }
+            ]
+        }
+        
+        # Send Webhook
+        response = self.client.post("/api/webhook", data=payload, content_type="application/json", headers={"X-GitHub-Event": "push"})
+        self.assertEqual(response.status_code, 200)
+         
+        # Emulate the calculation trigger that handles recalculation (or test the manual trigger)
+        from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
+        calculate_module_brain_files(module.id)
+         
+        # Verify brain file coupling increased
+        brain_file.refresh_from_db()
+        self.assertEqual(brain_file.inbound_coupling, 5, "Inbound coupling should dynamically increase from the webhook")
+

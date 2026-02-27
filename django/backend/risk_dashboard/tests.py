@@ -94,3 +94,73 @@ class RiskAnalyticsTests(SimpleTestCase):
         
         self.assertTrue(result['abandoned_code'])
         self.assertIn("Alice", result['abandoned_details'])
+
+from django.test import TestCase
+from git_blame_ingestion_app.models import Repo, Module, File
+from .services.brain_file_analysis import calculate_module_brain_files
+
+class BrainFileAnalysisTests(TestCase):
+    def setUp(self):
+        self.repo = Repo.objects.create(name="test-repo", owner="test-owner", url="https://github.com/test-owner/test-repo")
+        self.module = Module.objects.create(repo=self.repo, name="src", dir_path="src")
+        
+        # Create 5 files to meet MIN_MODULE_SIZE (5)
+        # 1 central file (brain file), 4 dependent files
+        
+        # Central file: size > 500, imported by all 4 other files (Density = 4 / (5 - 1) = 1.0 > 0.8)
+        self.brain_file = File.objects.create(
+            module_id_id=self.module.id,
+            file_path="src/utils.py",
+            line_count=600,
+            ast_summary={"loc": 600, "imports": []}
+        )
+        
+        self.dep1 = File.objects.create(
+            module_id_id=self.module.id,
+            file_path="src/a.py",
+            line_count=100,
+            ast_summary={"loc": 100, "imports": ["src.utils"]}
+        )
+        self.dep2 = File.objects.create(
+            module_id_id=self.module.id,
+            file_path="src/b.py",
+            line_count=100,
+            ast_summary={"loc": 100, "imports": ["src.utils"]}
+        )
+        self.dep3 = File.objects.create(
+            module_id_id=self.module.id,
+            file_path="src/c.py",
+            line_count=100,
+            ast_summary={"loc": 100, "imports": ["src.utils"]}
+        )
+        self.dep4 = File.objects.create(
+            module_id_id=self.module.id,
+            file_path="src/d.py",
+            line_count=100,
+            ast_summary={"loc": 100, "imports": ["src.utils"]}
+        )
+
+    def test_calculate_module_brain_files(self):
+        calculate_module_brain_files(self.module.id)
+        
+        # Refresh from DB
+        self.brain_file.refresh_from_db()
+        self.dep1.refresh_from_db()
+        
+        # Assertions
+        self.assertTrue(self.brain_file.is_brain_file, "File should be a brain file")
+        self.assertEqual(self.brain_file.inbound_coupling, 4)
+        self.assertEqual(self.brain_file.module_density, 1.0)
+        
+        self.assertFalse(self.dep1.is_brain_file)
+        self.assertEqual(self.dep1.inbound_coupling, 0)
+        self.assertEqual(self.dep1.module_density, 0.0)
+
+    def test_small_module_ignores_brain_files(self):
+        # Remove a dependency so module size < MIN_MODULE_SIZE (5)
+        self.dep4.delete()
+        
+        calculate_module_brain_files(self.module.id)
+        self.brain_file.refresh_from_db()
+        
+        self.assertFalse(self.brain_file.is_brain_file, "Small modules should not have Brain Files")

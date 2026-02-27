@@ -59,7 +59,14 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
                 logger.error(f"ROOT module not found for repo {repo_owner}/{repo_name}. Cannot process file {file_path}")
                 return
         
-        ingestion.process_blame_response(module_id, blame_data, file_path)
+        # Fetch file content and perform static analysis
+        content_bytes = service.get_file_content(repo_owner, repo_name, file_path, commit_hash)
+        ast_summary = None
+        if content_bytes is not None:
+            from .services.static_analysis import analyze_code_file
+            ast_summary = analyze_code_file(file_path, content_bytes)
+
+        ingestion.process_blame_response(module_id, blame_data, file_path, ast_summary=ast_summary)
         
         duration = time.time() - start_time
         logger.info(f"Task finished in {duration:.2f}s for {file_path}")
@@ -170,11 +177,15 @@ def finalize_repo_ingestion(repo_id):
     
     try:
         from .models import Module
+        from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
         modules = Module.objects.filter(repo_id=repo_id)
         
         for module in modules:
             logger.info(f"Calculating metrics for module {module.id} ({module.name})")
             ingestion.calculate_module_metrics(module.id)
+            
+            logger.info(f"Calculating Brain Files for module {module.id}")
+            calculate_module_brain_files(module.id)
             
         logger.info(f"Module metrics calculation complete for repo {repo_id}")
         
