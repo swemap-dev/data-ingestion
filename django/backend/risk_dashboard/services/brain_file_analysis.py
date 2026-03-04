@@ -10,13 +10,36 @@ LINES_THRESHOLD = 50
 LINES_PERCENTAGE = 0.10
 MIN_MODULE_SIZE = 5
 
+# Source code extensions eligible for brain file analysis.
+# Builder/config files (package.json, CMakeLists.txt, etc.) are excluded.
+SOURCE_CODE_EXTENSIONS = {
+    '.py', '.js', '.jsx', '.ts', '.tsx',
+    '.java', '.kt', '.kts',
+    '.go', '.rs', '.rb',
+    '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp',
+    '.cs', '.swift', '.scala',
+    '.php', '.lua', '.r',
+}
+
 def calculate_module_brain_files(module_id: int):
     """
     Evaluates Brain File metrics for all files in a given module.
     """
-    files = list(File.objects.filter(module_id_id=module_id))
+    import os
+    all_files = list(File.objects.filter(module_id_id=module_id))
+    files = [f for f in all_files if os.path.splitext(f.file_path)[1].lower() in SOURCE_CODE_EXTENSIONS]
+    non_code_files = [f for f in all_files if f not in files]
+
+    # Reset non-code files so they are never flagged as brain files
+    if non_code_files:
+        for f in non_code_files:
+            f.inbound_coupling = 0
+            f.module_density = 0.0
+            f.is_brain_file = False
+        File.objects.bulk_update(non_code_files, ['inbound_coupling', 'module_density', 'is_brain_file'])
+
     N = len(files)
-    
+
     if N < MIN_MODULE_SIZE:
         logger.info(f"Module {module_id} is too small ({N} files) for Brain File analysis. Skipping.")
         # Reset all files in module to not brain file
@@ -29,18 +52,21 @@ def calculate_module_brain_files(module_id: int):
         return
         
     file_map = {f.file_path: f for f in files}
-    file_paths = list(file_map.keys())
-    
+    file_paths = sorted(file_map.keys(), key=lambda p: -len(p))
+
+    # Pre-pass: update loc_count from ast_summary so DB is current for percentile query
+    for f in files:
+        ast_info = f.ast_summary or {}
+        f.loc_count = ast_info.get("loc", f.line_count or 0)
+    File.objects.bulk_update(files, ['loc_count'])
+
     # Initialize inbound coupling
     # We use a set of unique importer file IDs for each file to calculate unique files that import it
     inbound_importers = {f.id: set() for f in files}
-    
+
     for f in files:
         ast_info = f.ast_summary or {}
         imports = ast_info.get("imports", [])
-        
-        # update LOC
-        f.loc_count = ast_info.get("loc", f.line_count or 0)
         
         for imp in imports:
             # Fuzzy match import paths to file paths in the DB

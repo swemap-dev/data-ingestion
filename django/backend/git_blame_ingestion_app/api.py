@@ -3,7 +3,8 @@ from ninja import NinjaAPI, Schema
 from django.http import HttpRequest
 import logging
 
-from .tasks import process_commit_blame, initialize_all
+from celery import chord
+from .tasks import process_commit_blame, initialize_all, recalculate_affected_modules
 from .models import Module
 from code_ownership.api import router as ownership_router
 from risk_dashboard.api import router as risk_router
@@ -84,17 +85,18 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         except Repo.DoesNotExist:
             return api.create_response(request, {"error": "Unknown repo"}, status=404)
             
-        enqueued_count = 0
-        
+        all_tasks = []
+        affected_module_ids = set()
+
+        import os
+        from .services.module_resolver import ModuleResolver
+        from .services import ingestion
+
         for commit in payload.commits:
             commit_hash = commit.id
             changed_files = commit.added + commit.modified
-            
+
             # Create any new modules introduced in this commit
-            import os
-            from .services.module_resolver import ModuleResolver
-            from .services import ingestion
-            
             new_modules = set()
             for fpath in changed_files:
                 dirname, basename = os.path.split(fpath)
@@ -102,20 +104,24 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
                     resolver = ModuleResolver([]) # Dummy instance just to check ignored dirs
                     if not resolver._is_ignored(dirname):
                         new_modules.add(dirname)
-                        
+
             for d in new_modules:
                 name_for_module = d if d else "ROOT"
                 logger.info(f"Webhook detected new module marker in '{name_for_module}'. Creating preemptively.")
                 ingestion.get_or_create_module(repo.id, name_for_module, d)
-            
-            # Enqueue file blame tasks
+
+            # Collect blame tasks and resolve affected modules
             for fpath in changed_files:
-                print(f"Enqueuing job for {owner}/{name} {fpath}")
                 logger.info(f"Enqueuing job for {owner}/{name} {fpath}")
-                process_commit_blame.delay(owner, name, commit_hash, fpath)
-                enqueued_count += 1
-                
-        return {"status": "processing", "jobs_enqueued": enqueued_count}
+                all_tasks.append(process_commit_blame.s(owner, name, commit_hash, fpath))
+                module_id = ingestion.resolve_module_from_db(repo.id, fpath)
+                if module_id:
+                    affected_module_ids.add(module_id)
+
+        if all_tasks:
+            chord(all_tasks)(recalculate_affected_modules.si(list(affected_module_ids)))
+
+        return {"status": "processing", "jobs_enqueued": len(all_tasks)}
         
     return {"status": "ignored", "reason": f"Event {event} not handled"}
 

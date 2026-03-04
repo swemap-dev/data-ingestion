@@ -168,6 +168,23 @@ def initialize_all():
     return {"status": "queued", "repos": repos}
 
 @shared_task
+def recalculate_affected_modules(module_ids):
+    """
+    Recalculate metrics for specific modules after a webhook push.
+    Only processes the modules that had files modified in the push.
+    """
+    from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
+    from risk_dashboard.services.structural_complexity import calculate_structural_complexity
+
+    for module_id in module_ids:
+        logger.info(f"Recalculating metrics for affected module {module_id}")
+        ingestion.calculate_module_metrics(module_id)
+        calculate_module_brain_files(module_id)
+        calculate_structural_complexity(module_id)
+
+    logger.info(f"Recalculated metrics for {len(module_ids)} affected module(s)")
+
+@shared_task
 def finalize_repo_ingestion(repo_id):
     """
     Callback task that runs after all file blame tasks are complete.
@@ -178,6 +195,7 @@ def finalize_repo_ingestion(repo_id):
     try:
         from .models import Module
         from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
+        from risk_dashboard.services.structural_complexity import calculate_structural_complexity
         modules = Module.objects.filter(repo_id=repo_id)
         
         for module in modules:
@@ -186,6 +204,9 @@ def finalize_repo_ingestion(repo_id):
             
             logger.info(f"Calculating Brain Files for module {module.id}")
             calculate_module_brain_files(module.id)
+
+            logger.info(f"Calculating Structural Complexity for module {module.id}")
+            calculate_structural_complexity(module.id)
             
         logger.info(f"Module metrics calculation complete for repo {repo_id}")
         

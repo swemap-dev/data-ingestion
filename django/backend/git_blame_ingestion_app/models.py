@@ -107,6 +107,11 @@ class File(models.Model):
     loc_count = models.IntegerField(default=0)
     is_brain_file = models.BooleanField(default=False)
 
+    # Structural Complexity Metrics
+    max_nesting_depth = models.IntegerField(default=0)
+    max_inheritance_depth = models.IntegerField(default=0)
+    structural_risk_score = models.IntegerField(default=0)
+
     class Meta:
         db_table = 'files'
         managed = True
