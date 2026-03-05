@@ -13,6 +13,21 @@ class FileContentsService:
         self.base_url = client.base_url
         self.graphql_url = "https://api.github.com/graphql"
 
+    def get_file_content(self, owner: str, repo: str, file_path: str, ref: str = "main") -> Optional[bytes]:
+        """Fetches the raw file content bytes from GitHub."""
+        url = f"{self.base_url}/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("encoding") == "base64":
+                import base64
+                return base64.b64decode(data["content"])
+            return None
+        except Exception as e:
+            print(f"Error fetching raw file content for {file_path}: {e}")
+            return None
+
     def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main") -> Dict[str, Any]:
         """
         Get rich blame data for a specific file using custom GraphQL query.

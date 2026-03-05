@@ -100,6 +100,17 @@ class File(models.Model):
     checksum = models.CharField(max_length=255, null=True, blank=True)
     line_count = models.IntegerField(null=True, blank=True)
     ast_summary = models.JSONField(null=True, blank=True)
+    
+    # Brain File Metrics
+    inbound_coupling = models.IntegerField(default=0)
+    module_density = models.FloatField(default=0.0)
+    loc_count = models.IntegerField(default=0)
+    is_brain_file = models.BooleanField(default=False)
+
+    # Structural Complexity Metrics
+    max_nesting_depth = models.IntegerField(default=0)
+    max_inheritance_depth = models.IntegerField(default=0)
+    structural_risk_score = models.IntegerField(default=0)
 
     class Meta:
         db_table = 'files'
