@@ -20,7 +20,7 @@ def get_shared_client():
     return _client
 
 @shared_task(bind=True, max_retries=3)
-def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
+def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path, ref='main'):
     """
     Task to fetch blame data and ingest it.
     """
@@ -30,7 +30,7 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         client = get_shared_client()
         service = FileContentsService(client)
         
-        blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref='main') # TODO: include other branches
+        blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref=ref) # TODO: include other branches
         
         if not blame_data:
             logger.warning(f"No blame data returned for {file_path} (possibly empty or GraphQL error)")
@@ -80,25 +80,25 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
              logger.error("Max retries exceeded for task.")
 
 @shared_task
-def initialize(repo_url):
+def initialize(repo_url, ref=None):
     """
     Initializes a repo by iterating all files and queuing jobs.
+    Optionally accepts a ref (branch name or commit SHA) to pin the ingestion.
     """
     try:
-        logger.info(f"Initializing {repo_url}")
+        logger.info(f"Initializing {repo_url} at ref={ref or 'default branch'}")
         owner, name = ingestion.parse_repo_url(repo_url)
         if not owner or not name:
             logger.error(f"Invalid Repository URL: {repo_url}")
             return
-            
+
         client = GitHubClient()
         service = FileContentsService(client)
-        
-        # Get default branch
+
         repo_meta = client.get_repository(owner, name)
-        ref = repo_meta.default_branch
-        
-        # Get Commit SHA
+        # Use provided ref, otherwise fall back to default branch
+        ref = ref or repo_meta.default_branch
+
         commit_sha, _, _ = service._get_tree_sha(owner, name, ref)
         file_paths = service.get_all_file_paths(owner, name, ref)
         logger.info(f"Found {len(file_paths)} files in {owner}/{name}")
@@ -137,7 +137,7 @@ def initialize(repo_url):
         
         # Enqueue jobs using Chord
         tasks = [
-            process_commit_blame.s(owner, name, commit_sha, fpath)
+            process_commit_blame.s(owner, name, commit_sha, fpath, ref)
             for fpath in file_paths
         ]
         
@@ -150,21 +150,29 @@ def initialize(repo_url):
         logger.error(f"Initialization failed for {repo_url}: {e}")
 
 # TODO: Remove this after testing
+
 @shared_task
-def initialize_all():
-    """
-    Initializes a set of default repositories.
-    """
-    repos = [
-        'https://github.com/justin-chung-swemap/swemap-demo',
-        'https://github.com/justin-chung-swemap/payment-platform',
-        'https://github.com/justin-chung-swemap/data-infrastructure'
-    ]
-    
+def initialize_all(ref=None):
+    env_repos = os.getenv("GITHUB_REPO_URLS", "")
+    if not env_repos:
+        repos = [
+            'https://github.com/justin-chung-swemap/swemap-demo',
+            'https://github.com/justin-chung-swemap/payment-platform',
+            'https://github.com/justin-chung-swemap/data-infrastructure'
+        ]
+    else:
+        repos = [r.strip() for r in env_repos.split(",") if r.strip()]
+
+    from .models import File, Module, Repo
+    logger.info("Clearing all existing repo data before re-initialization.")
+    File.objects.all().delete()
+    Module.objects.all().delete()
+    Repo.objects.all().delete()
+
     for url in repos:
-        logger.info(f"Triggering initialization for {url}")
-        initialize.delay(url)
-    
+        logger.info(f"Triggering initialization for {url} at ref={ref or 'default'}")
+        initialize.delay(url, ref=ref)
+
     return {"status": "queued", "repos": repos}
 
 @shared_task

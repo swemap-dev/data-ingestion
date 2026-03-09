@@ -56,3 +56,17 @@ def get_structural_complexity(request, module_id: int):
         "total_structural_risk_score": total_risk,
     }
 
+class BrainFileSchema(Schema):
+    file_path: str
+    is_brain_file: bool
+    inbound_coupling: int
+    module_density: float
+    loc_count: Optional[int] = None
+
+@router.get("/modules/{module_id}/brain-files", response=List[BrainFileSchema])
+def get_brain_files(request, module_id: int):
+    from git_blame_ingestion_app.models import File
+    files = File.objects.filter(module_id_id=module_id).values(
+        "file_path", "is_brain_file", "inbound_coupling", "module_density", "loc_count"
+    )
+    return list(files)
