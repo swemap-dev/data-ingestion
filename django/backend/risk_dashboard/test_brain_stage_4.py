@@ -1,24 +1,20 @@
 """
-Brain File E2E — Stage 3: Webhook Add File That Does NOT Import Utils
-======================================================================
-Branch: test/stage-3 (SHA: 05fe37a)
+Brain File E2E — Stage 4: Webhook Grow Small Module
+=====================================================
+Branch: test/stage-4 (SHA: 8b40b50)
 
-Repo state (adds to stage-2):
-    src/f.py added — no imports
+Repo state (adds to stage-3):
+    lib/x.py, lib/y.py, lib/z.py added — all import helper.py
 
 Expected:
-    - utils.py inbound_coupling stays at 5 (f.py doesn't import it)
-    - module_density drops: 5/7 peers = 0.714 < 0.8
-    - utils.py LOSES brain file status
-
-This is a critical edge case — a file with no imports should cause utils.py
-to drop below the 0.8 density threshold and lose brain file classification.
+    - lib/ module now has >= 5 files, triggering brain file analysis
+    - helper.py becomes a brain file (inbound_coupling=3, imported by x/y/z)
 
 Usage:
-    pytest test_brain_stage3.py -v
+    pytest test_brain_stage4.py -v
 
 Prerequisites:
-    - Stage 2 tests should have passed first
+    - Stage 3 tests should have passed first
     - Django server running:  python manage.py runserver
     - Celery worker running:  celery -A backend worker -l info
     - Redis running
@@ -33,14 +29,14 @@ import requests
 # Config
 # ---------------------------------------------------------------------------
 
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
-GITHUB_OWNER = os.getenv("GITHUB_OWNER", "swemap-dev")
-REPO_NAME = os.getenv("REPO_NAME", "brain-test-file-repo")
+BASE_URL       = os.getenv("BASE_URL", "http://localhost:8000")
+GITHUB_OWNER   = os.getenv("GITHUB_OWNER", "swemap-dev")
+REPO_NAME      = os.getenv("REPO_NAME", "brain-test-file-repo")
 REPO_FULL_NAME = f"{GITHUB_OWNER}/{REPO_NAME}"
-CELERY_WAIT = int(os.getenv("CELERY_WAIT", "45"))
+CELERY_WAIT    = int(os.getenv("CELERY_WAIT", "45"))
 
-STAGE_BRANCH = "test/stage-2"  # init from stage-2 (e.py already present)
-SHA_ADD_F = "test/stage-3"     # commit SHA where f.py was added
+STAGE_BRANCH = "test/stage-3"  # init from stage-3 (f.py already present)
+SHA_ADD_XYZ  = "test/stage-4"  # branch name, not short SHA
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +82,7 @@ def find_file(files, name):
 
 @pytest.fixture(scope="session")
 def init_repo():
-    """Initializes repo at test/stage-2 (e.py already present) and waits for Celery."""
+    """Initializes repo at test/stage-3 (f.py already present) and waits for Celery."""
     resp = requests.post(api("/api/init-all"), json={"ref": STAGE_BRANCH})
     assert resp.status_code == 200, f"init-all failed: {resp.text}"
     data = resp.json()
@@ -109,48 +105,47 @@ def module_ids(init_repo):
         elif "lib" in name:
             ids["lib"] = m["module_id"]
 
-    assert "src" in ids, f"src module not found in: {modules}"
+    assert "lib" in ids, f"lib module not found in: {modules}"
     return ids
 
 @pytest.fixture(scope="session")
 def webhook_sent(module_ids):
-    """Sends webhook for f.py and waits for Celery."""
-    data = send_webhook(added=["src/f.py"], commit_id=SHA_ADD_F)
-    assert data["jobs_enqueued"] == 1
+    """Sends webhook for x/y/z.py and waits for Celery."""
+    data = send_webhook(
+        added=["lib/x.py", "lib/y.py", "lib/z.py"],
+        commit_id=SHA_ADD_XYZ
+    )
+    assert data["jobs_enqueued"] == 3
     wait_for_celery()
     return data
+
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestStage3WebhookAddFileNoImports:
+class TestStage4WebhookGrowSmallModule:
 
-    def test_webhook_enqueues_job_for_f_py(self, webhook_sent):
-        """Webhook for src/f.py should enqueue 1 job."""
+    def test_webhook_enqueues_three_jobs(self, webhook_sent):
+        """Webhook for x/y/z.py at test/stage-4 should enqueue 3 jobs."""
         assert webhook_sent["status"] == "processing"
-        assert webhook_sent["jobs_enqueued"] == 1
+        assert webhook_sent["jobs_enqueued"] == 3
 
-    def test_density_decreased_below_threshold(self, module_ids, webhook_sent):
-        """After f.py (no imports) is added, module_density should drop below 0.8."""
-        files = recalculate_brain_files(module_ids["src"])
-        utils = find_file(files, "utils.py")
-        assert utils is not None, "utils.py not found after recalculation"
-        assert utils["module_density"] < 0.8, \
-            f"Expected module_density<0.8, got {utils['module_density']}"
+    def test_lib_module_now_has_enough_files(self, module_ids, webhook_sent):
+        """lib/ module should now have >= 5 files after x/y/z are added."""
+        files = recalculate_brain_files(module_ids["lib"])
+        assert len(files) >= 5, \
+            f"Expected >= 5 files in lib/ module, got {len(files)}"
 
-    def test_utils_loses_brain_file_status(self, module_ids, webhook_sent):
-        """utils.py should no longer be a brain file after density drops below 0.8."""
-        files = recalculate_brain_files(module_ids["src"])
-        utils = find_file(files, "utils.py")
-        assert utils is not None
-        assert utils["is_brain_file"] is False, \
-            f"Expected is_brain_file=False after density drop, got {utils}"
-
-    def test_inbound_coupling_unchanged(self, module_ids, webhook_sent):
-        """inbound_coupling should still be 5 — f.py doesn't import utils."""
-        files = recalculate_brain_files(module_ids["src"])
-        utils = find_file(files, "utils.py")
-        assert utils is not None
-        assert utils["inbound_coupling"] == 5, \
-            f"Expected inbound_coupling=5 (unchanged), got {utils['inbound_coupling']}"
+    def test_helper_py_is_brain_file_in_lib(self, module_ids, webhook_sent):
+        """lib/ now has >= 5 files so brain file analysis runs.
+        helper.py has inbound_coupling=3 but density=0.75 < 0.8 so is_brain_file=False."""
+        files = recalculate_brain_files(module_ids["lib"])
+        helper = find_file(files, "helper.py")
+        assert helper is not None, "helper.py not found in lib/ brain-files response"
+        assert helper["inbound_coupling"] == 3, \
+            f"Expected inbound_coupling=3, got {helper['inbound_coupling']}"
+        assert helper["module_density"] == 0.75, \
+            f"Expected module_density=0.75, got {helper['module_density']}"
+        assert helper["is_brain_file"] is False, \
+            f"Expected is_brain_file=False (density 0.75 < 0.8), got {helper}"
