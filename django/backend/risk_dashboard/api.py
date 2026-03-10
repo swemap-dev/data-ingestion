@@ -3,6 +3,7 @@ from ninja import Router, Schema
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
 from git_blame_ingestion_app.models import File
+from .services.brain_file_analysis import calculate_module_brain_files
 
 router = Router()
 
@@ -67,6 +68,14 @@ class BrainFileSchema(Schema):
 def get_brain_files(request, module_id: int):
     from git_blame_ingestion_app.models import File
     files = File.objects.filter(module_id_id=module_id).values(
+        "file_path", "is_brain_file", "inbound_coupling", "module_density", "loc_count"
+    )
+    return list(files)
+
+@router.post("/modules/{module_id}/recalculate-brain-files")
+def recalculate_brain_files(request, module_id: int):
+    calculate_module_brain_files(module_id)
+    files = File.objects.filter(module_id=module_id).values(
         "file_path", "is_brain_file", "inbound_coupling", "module_density", "loc_count"
     )
     return list(files)
