@@ -1,0 +1,25 @@
+query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!) {
+  repository(owner: $owner, name: $repo) {
+    ref(qualifiedName: $ref) {
+      target {
+        ... on Commit {
+          blame(path: $path) {
+            ranges {
+              commit {
+                id
+                oid
+                author {
+                  name
+                  email
+                }
+              }
+              startingLine
+              endingLine
+              age
+            }
+          }
+        }
+      }
+    }
+  }
+}

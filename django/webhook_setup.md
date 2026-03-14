@@ -102,3 +102,7 @@ python manage.py test <app_name>
 # Example: 
 python manage.py test git_blame_ingestion_app
 ```
+Run a class of tests of an app:
+```bash
+python manage.py test risk_dashboard.tests.ChangeFrequencyBasicTests -v2
+```

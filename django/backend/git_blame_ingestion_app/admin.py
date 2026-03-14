@@ -1,8 +1,8 @@
 from django.contrib import admin
 from .models import (
-    Engineer, Repo, Skill, Module, File, Review, 
+    Engineer, Repo, Skill, Module, File, Review,
     ModuleSkill, EngineerSkill, FileDependency, LineOwnership, FileOwnershipMetric,
-    ModuleOwnershipMetric
+    ModuleOwnershipMetric, PullRequest, PullRequestFile
 )
 
 # Register your models here.
@@ -19,3 +19,5 @@ admin.site.register(FileDependency)
 admin.site.register(LineOwnership)
 admin.site.register(FileOwnershipMetric)
 admin.site.register(ModuleOwnershipMetric)
+admin.site.register(PullRequest)
+admin.site.register(PullRequestFile)

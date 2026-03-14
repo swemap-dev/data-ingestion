@@ -1,0 +1,14 @@
+query GetRefCommit($owner: String!, $repo: String!, $ref: String!) {
+  repository(owner: $owner, name: $repo) {
+    ref(qualifiedName: $ref) {
+      target {
+        ... on Commit {
+          oid
+          tree {
+            oid
+          }
+        }
+      }
+    }
+  }
+}

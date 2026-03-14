@@ -1,14 +1,34 @@
 import os
+import sys
 import requests
-from typing import Optional, Dict, Any
-from django.conf import settings
-from .repository import RepositoryMetadata
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+
+if __name__ == "__main__":
+    # Allow running directly for testing
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+    from git_blame_ingestion_app.services.repository import RepositoryMetadata
+
+    class _FakeSettings:
+        GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+    settings = _FakeSettings()
+else:
+    from django.conf import settings
+    from .repository import RepositoryMetadata
+
 
 class GitHubClient:
     def __init__(self, token: Optional[str] = None):
         self.token = token or getattr(settings, 'GITHUB_TOKEN', None) or os.getenv('GITHUB_TOKEN')
 
-        self.base_url = 'https://api.github.com'
+        self.base_url = 'https://api.github.com/graphql'
+        self.queries_dir = Path(__file__).parent / "queries"
         self.session = requests.Session()
         
         if self.token:
@@ -34,14 +54,150 @@ class GitHubClient:
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
+
     
+    def _load_query(self, name: str) -> str:
+        """Load a GraphQL query from the queries/ directory by filename (without extension)."""
+        path = self.queries_dir / f"{name}.graphql"
+        if not path.exists():
+            raise FileNotFoundError(f"Query file not found: {path}")
+        return path.read_text()
+    
+    
+    def _request(self, query: str, variables: dict) -> dict:
+        """Send a GraphQL request and return the parsed JSON response."""
+        payload = json.dumps({"query": query, "variables": variables}).encode()
+        req = urllib.request.Request(
+            self.base_url,
+            data=payload,
+            headers={
+                "Authorization": f"bearer {self.token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            raise RuntimeError(f"GitHub API error {e.code}: {body}")
+
+        if "errors" in data:
+            messages = [err["message"] for err in data["errors"]]
+            raise RuntimeError(f"GraphQL errors: {'; '.join(messages)}")
+
+        return data["data"]
+
+        
     def get_repository_metadata(self, owner: str, repo: str) -> Dict[str, Any]:
-        url = f'{self.base_url}/repos/{owner}/{repo}'
-        print(f"GET {url}")
-        response = self.session.get(url)
-        response.raise_for_status()
-        return response.json()
+        """Fetch repository metadata (name, description, stars, languages, etc.)."""
+        query = self._load_query("repository_metadata")
+        data = self._request(query, {"owner": owner, "repo": repo})
+        return data["repository"]
     
+
     def get_repository(self, owner: str, repo: str) -> RepositoryMetadata:
+        """Fetch repository metadata and return it as a RepositoryMetadata object."""
         data = self.get_repository_metadata(owner, repo)
-        return RepositoryMetadata.from_api_response(data)
+        return RepositoryMetadata.from_graphql_response(data)
+    
+
+    def get_merged_pulls(self, owner: str, repo: str, since: datetime) -> list:
+        """Fetch merged PRs updated since the given datetime.
+
+        The query orders by UPDATED_AT DESC and stops paginating once all PRs
+        on a page were updated before `since`, matching the original REST logic.
+        Files for each PR (up to 100) are included inline.
+        """
+        query = self._load_query("merged_prs")
+        merged_pulls = []
+        cursor = None
+
+        while True:
+            data = self._request(query, {
+                "owner": owner,
+                "repo": repo,
+                "first": 100,
+                "after": cursor,
+            })
+
+            pr_connection = data["repository"]["pullRequests"]
+            nodes = pr_connection["nodes"]
+
+            all_before_since = True
+            for pr in nodes:
+                updated_at = datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00"))
+                if updated_at < since:
+                    continue
+
+                all_before_since = False
+                merged_at = datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00"))
+                if merged_at >= since:
+                    merged_pulls.append(pr)
+
+            if all_before_since or not pr_connection["pageInfo"]["hasNextPage"]:
+                break
+
+            cursor = pr_connection["pageInfo"]["endCursor"]
+
+        return merged_pulls
+    
+
+    def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> List[str]:
+        """Fetch all changed file paths for a single pull request.
+
+        If a PR has more than 100 files, this paginates through the remaining
+        pages using the pr_files query.
+        """
+        query = self._load_query("pr_files")
+        filenames = []
+        cursor = None
+
+        while True:
+            data = self._request(query, {
+                "owner": owner,
+                "repo": repo,
+                "number": pr_number,
+                "first": 100,
+                "after": cursor,
+            })
+
+            files_connection = data["repository"]["pullRequest"]["files"]
+            for f in files_connection["nodes"]:
+                filenames.append(f["path"])
+
+            if not files_connection["pageInfo"]["hasNextPage"]:
+                break
+
+            cursor = files_connection["pageInfo"]["endCursor"]
+
+        return filenames
+
+
+if __name__ == "__main__":
+    from datetime import timedelta, timezone
+
+    TOKEN = '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'
+    OWNER = "swemap-dev"
+    REPO = "data-ingestion"
+
+    client = GitHubClient(TOKEN)
+
+    # Fetch PRs merged in the last 30 days
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    prs = client.get_merged_pulls(OWNER, REPO, since)
+
+    print(f"Found {len(prs)} merged PRs since {since.date()}\n")
+    print(f"{'#':<6} {'Merged At':<22} {'Author':<16} {'Title'}")
+    print("-" * 80)
+    for pr in prs:
+        author = pr["author"]["login"] if pr["author"] else "unknown"
+        print(f"#{pr['number']:<5} {pr['mergedAt']:<22} {author:<16} {pr['title']}")
+
+    # Fetch files for the first PR as a demo
+    if prs:
+        pr_num = prs[0]["number"]
+        files = client.get_pull_request_files(OWNER, REPO, pr_num)
+        print(f"\nFiles changed in PR #{pr_num}:")
+        for f in files:
+            print(f"  {f}")

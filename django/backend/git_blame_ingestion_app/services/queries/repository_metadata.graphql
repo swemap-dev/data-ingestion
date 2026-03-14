@@ -1,0 +1,49 @@
+query RepositoryMetadata($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    databaseId
+    name
+    nameWithOwner
+    description
+    url
+    homepageUrl
+    isPrivate
+    isArchived
+    isFork
+    createdAt
+    updatedAt
+    pushedAt
+    defaultBranchRef {
+      name
+    }
+    primaryLanguage {
+      name
+    }
+    languages(first: 10) {
+      nodes {
+        name
+      }
+    }
+    stargazerCount
+    forkCount
+    watchers {
+      totalCount
+    }
+    issues(states: [OPEN]) {
+      totalCount
+    }
+    pullRequests(states: [OPEN]) {
+      totalCount
+    }
+    licenseInfo {
+      name
+      spdxId
+    }
+    repositoryTopics(first: 10) {
+      nodes {
+        topic {
+          name
+        }
+      }
+    }
+  }
+}
