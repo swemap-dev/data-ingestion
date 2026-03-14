@@ -2,10 +2,12 @@ import logging
 import os
 import time
 from celery import shared_task, chord
+from celery.contrib import rdb
 from django.conf import settings
 
 from .services.client import GitHubClient
 from .services.file_contents import FileContentsService
+from .services.file_contents_gql import FileContentsServiceGQL
 from .services import ingestion
 from .models import Repo
 
@@ -28,7 +30,7 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         logger.info(f"Processing blame for {repo_owner}/{repo_name} {file_path} @ {commit_hash}")
         
         client = get_shared_client()
-        service = FileContentsService(client)
+        service = FileContentsServiceGQL(client)
         
         blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref='main') # TODO: include other branches
         
@@ -92,8 +94,8 @@ def initialize(repo_url):
             return
             
         client = GitHubClient()
-        service = FileContentsService(client)
-        
+        service = FileContentsServiceGQL(client)
+
         # Get default branch
         repo_meta = client.get_repository(owner, name)
         ref = repo_meta.default_branch
@@ -135,15 +137,19 @@ def initialize(repo_url):
                 logger.error(f"Error creating module {d} for {owner}/{name}: {e}")
 
         
+        # Ingest merged PRs before blame chord so data is ready for finalization
+        from .services.pr_ingestion import ingest_merged_prs
+        ingest_merged_prs(repo_obj.id, owner, name)
+
         # Enqueue jobs using Chord
         tasks = [
             process_commit_blame.s(owner, name, commit_sha, fpath)
             for fpath in file_paths
         ]
-        
+
         # Chord: executing a group of tasks (header) and then a callback (body)
         chord(tasks)(finalize_repo_ingestion.si(repo_obj.id))
-        
+
         logger.info(f"Queued {len(tasks)} blame tasks for {owner}/{name}")
             
     except Exception as e:
@@ -175,6 +181,16 @@ def recalculate_affected_modules(module_ids):
     """
     from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
     from risk_dashboard.services.structural_complexity import calculate_structural_complexity
+    from risk_dashboard.services.change_frequency import calculate_change_frequency
+    from .services.pr_ingestion import ingest_merged_prs
+
+    # PR ingestion + change frequency are repo-wide — run once, not per module
+    if module_ids:
+        from .models import Module
+        first_module = Module.objects.get(id=module_ids[0])
+        repo = first_module.repo
+        ingest_merged_prs(repo.id, repo.owner, repo.name)
+        calculate_change_frequency(repo.id)
 
     for module_id in module_ids:
         logger.info(f"Recalculating metrics for affected module {module_id}")
@@ -196,19 +212,24 @@ def finalize_repo_ingestion(repo_id):
         from .models import Module
         from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
         from risk_dashboard.services.structural_complexity import calculate_structural_complexity
+        from risk_dashboard.services.change_frequency import calculate_change_frequency
         modules = Module.objects.filter(repo_id=repo_id)
-        
+
         for module in modules:
             logger.info(f"Calculating metrics for module {module.id} ({module.name})")
             ingestion.calculate_module_metrics(module.id)
-            
+
             logger.info(f"Calculating Brain Files for module {module.id}")
             calculate_module_brain_files(module.id)
 
             logger.info(f"Calculating Structural Complexity for module {module.id}")
             calculate_structural_complexity(module.id)
-            
+
+        # Change frequency is repo-wide (percentile ranking requires all files)
+        logger.info(f"Calculating Change Frequency for repo {repo_id}")
+        calculate_change_frequency(repo_id)
+
         logger.info(f"Module metrics calculation complete for repo {repo_id}")
-        
+
     except Exception as e:
         logger.error(f"Error in finalize_repo_ingestion for repo {repo_id}: {e}")

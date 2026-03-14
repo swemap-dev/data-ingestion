@@ -1,0 +1,27 @@
+query GetCommitReviewers($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Commit {
+      id
+      associatedPullRequests(first: 1) {
+        nodes {
+          reviews(first: 10) {
+            nodes {
+              author {
+                ... on User {
+                  name
+                  email
+                  login
+                }
+                ... on Bot {
+                  login
+                }
+              }
+              state
+              submittedAt
+            }
+          }
+        }
+      }
+    }
+  }
+}

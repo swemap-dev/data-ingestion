@@ -10,12 +10,12 @@ class FileContentsService:
     def __init__(self, client: GitHubClient):
         self.client = client
         self.session = client.session
-        self.base_url = client.base_url
+        self.rest_base_url = "https://api.github.com"
         self.graphql_url = "https://api.github.com/graphql"
 
     def get_file_content(self, owner: str, repo: str, file_path: str, ref: str = "main") -> Optional[bytes]:
         """Fetches the raw file content bytes from GitHub."""
-        url = f"{self.base_url}/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+        url = f"{self.rest_base_url}/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
         try:
             response = self.session.get(url)
             response.raise_for_status()
@@ -350,13 +350,13 @@ class FileContentsService:
         Returns:
             tuple[str, str, Dict[str, Any]]: A tuple containing (commit_sha, tree_sha, commit_data).
         """
-        url = f"{self.base_url}/repos/{owner}/{repo}/git/ref/heads/{ref}"
+        url = f"{self.rest_base_url}/repos/{owner}/{repo}/git/ref/heads/{ref}"
         print(f"GET {url}")
         response = self.session.get(url)
         response.raise_for_status()
         commit_sha = response.json()["object"]["sha"]
 
-        url = f"{self.base_url}/repos/{owner}/{repo}/git/commits/{commit_sha}"
+        url = f"{self.rest_base_url}/repos/{owner}/{repo}/git/commits/{commit_sha}"
         print(f"GET {url}")
         response = self.session.get(url)
         response.raise_for_status()
@@ -377,7 +377,7 @@ class FileContentsService:
             Dict[str, str]: A dictionary mapping file paths to their blob SHAs.
         """
         # TODO: this GET request has a JSON response limit of 7MB; need ways to handle large repositories
-        url = f"{self.base_url}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
+        url = f"{self.rest_base_url}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
         response = self.session.get(url)
         response.raise_for_status()
 
@@ -497,7 +497,7 @@ class FileContentsService:
         Returns:
             Optional[List[Dict[str, Any]]]: List of lines with content and commit SHA, or None if failed.
         """
-        blob_url = f"{self.base_url}/repos/{owner}/{repo}/git/blobs/{blob_sha}"
+        blob_url = f"{self.rest_base_url}/repos/{owner}/{repo}/git/blobs/{blob_sha}"
         thread_id = threading.get_ident()
         print(f"[Thread {thread_id}] GET {blob_url} (file: {file_path})")
 

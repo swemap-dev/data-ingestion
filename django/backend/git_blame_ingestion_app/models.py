@@ -112,6 +112,10 @@ class File(models.Model):
     max_inheritance_depth = models.IntegerField(default=0)
     structural_risk_score = models.IntegerField(default=0)
 
+    # Change Frequency (File Churn) Metrics
+    change_frequency_score = models.FloatField(default=0.0)
+    change_frequency_raw = models.FloatField(default=0.0)
+
     class Meta:
         db_table = 'files'
         managed = True
@@ -217,3 +221,40 @@ class LineOwnership(models.Model):
         # But for now, we leave the Exclude constraint to database level (created via SQL or RunSQL migration)
         # or we can use ExclusionConstraint from django.contrib.postgres.constraints
         managed = True
+
+
+class PullRequest(models.Model):
+    repo = models.ForeignKey(Repo, on_delete=models.CASCADE, related_name='pull_requests')
+    github_pr_number = models.IntegerField()
+    title = models.CharField(max_length=512, null=True, blank=True)
+    merged_at = models.DateTimeField()
+    author_login = models.CharField(max_length=255, null=True, blank=True)
+    is_revert = models.BooleanField(default=False)
+    is_bot = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'pull_requests'
+        unique_together = ('repo', 'github_pr_number')
+        indexes = [
+            models.Index(fields=['repo', 'merged_at'], name='idx_pr_repo_merged_at'),
+        ]
+        managed = True
+
+    def __str__(self):
+        return f"PR #{self.github_pr_number} - {self.title}"
+
+
+class PullRequestFile(models.Model):
+    pull_request = models.ForeignKey(PullRequest, on_delete=models.CASCADE, related_name='pr_files')
+    file_path = models.CharField(max_length=512)
+
+    class Meta:
+        db_table = 'pull_request_files'
+        unique_together = ('pull_request', 'file_path')
+        indexes = [
+            models.Index(fields=['file_path'], name='idx_pr_file_path'),
+        ]
+        managed = True
+
+    def __str__(self):
+        return self.file_path

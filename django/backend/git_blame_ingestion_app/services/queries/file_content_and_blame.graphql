@@ -1,0 +1,32 @@
+query GetFileContentAndBlame(
+  $owner: String!
+  $repo: String!
+  $expression: String!
+  $ref: String!
+  $path: String!
+) {
+  repository(owner: $owner, name: $repo) {
+    content: object(expression: $expression) {
+      ... on Blob {
+        text
+        oid
+        byteSize
+      }
+    }
+    ref(qualifiedName: $ref) {
+      target {
+        ... on Commit {
+          blame(path: $path) {
+            ranges {
+              startingLine
+              endingLine
+              commit {
+                oid
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

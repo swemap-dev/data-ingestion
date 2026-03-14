@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from ninja import Router, Schema
+from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
 from git_blame_ingestion_app.models import File
@@ -54,5 +55,47 @@ def get_structural_complexity(request, module_id: int):
         "files_with_deep_nesting": deep_nesting,
         "files_with_deep_inheritance": deep_inheritance,
         "total_structural_risk_score": total_risk,
+    }
+
+
+class ChangeFrequencyFileSchema(Schema):
+    file_path: str
+    change_frequency_score: float
+    change_frequency_raw: float
+    is_hotspot: bool
+
+class ChangeFrequencySchema(Schema):
+    files: List[ChangeFrequencyFileSchema]
+    hotspot_count: int
+    average_score: float
+
+@router.get("/modules/{module_id}/change-frequency", response=ChangeFrequencySchema)
+def get_change_frequency(request, module_id: int):
+    # Scores are pre-computed during ingestion — just read from DB
+    files = File.objects.filter(module_id_id=module_id)
+
+    hotspot_threshold = settings.RISK_CONFIG["CHURN_HOTSPOT_THRESHOLD"]
+
+    file_data = [
+        {
+            "file_path": f.file_path,
+            "change_frequency_score": f.change_frequency_score,
+            "change_frequency_raw": f.change_frequency_raw,
+            "is_hotspot": f.change_frequency_score >= hotspot_threshold,
+        }
+        for f in files
+    ]
+
+    hotspot_count = sum(1 for f in file_data if f["is_hotspot"])
+    average_score = (
+        sum(f["change_frequency_score"] for f in file_data) / len(file_data)
+        if file_data
+        else 0.0
+    )
+
+    return {
+        "files": file_data,
+        "hotspot_count": hotspot_count,
+        "average_score": average_score,
     }
 

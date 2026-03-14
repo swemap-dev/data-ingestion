@@ -30,38 +30,42 @@ class RepositoryMetadata:
     license: Optional[str]
     
     @classmethod
-    def from_api_response(cls, data: Dict[str, Any]) -> 'RepositoryMetadata':
+    def from_graphql_response(cls, data: Dict[str, Any]) -> 'RepositoryMetadata':
         def parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
             if not dt_str:
                 return None
             return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        
+
         license_name = None
-        if data.get('license'):
-            license_name = data['license'].get('name')
-        
+        if data.get('licenseInfo'):
+            license_name = data['licenseInfo'].get('name')
+
+        name_with_owner = data.get('nameWithOwner', '')
+        owner = name_with_owner.split('/')[0] if '/' in name_with_owner else ''
+        url = data.get('url', '')
+
         return cls(
-            id=data['id'],
-            name=data['name'],
-            full_name=data['full_name'],
-            owner=data['owner']['login'],
+            id=data.get('databaseId', 0) or 0,
+            name=data.get('name', ''),
+            full_name=name_with_owner,
+            owner=owner,
             description=data.get('description'),
-            url=data['url'],
-            clone_url=data['clone_url'],
-            ssh_url=data['ssh_url'],
-            html_url=data['html_url'],
-            language=data.get('language'),
-            stars=data.get('stargazers_count', 0),
-            forks=data.get('forks_count', 0),
-            watchers=data.get('watchers_count', 0),
-            open_issues=data.get('open_issues_count', 0),
-            default_branch=data.get('default_branch', 'main'),
-            is_private=data.get('private', False),
-            is_fork=data.get('fork', False),
-            is_archived=data.get('archived', False),
-            created_at=parse_datetime(data.get('created_at')),
-            updated_at=parse_datetime(data.get('updated_at')),
-            pushed_at=parse_datetime(data.get('pushed_at')),
-            size=data.get('size', 0),
-            license=license_name
+            url=url,
+            clone_url=f"{url}.git" if url else '',
+            ssh_url=f"git@github.com:{name_with_owner}.git" if name_with_owner else '',
+            html_url=url,
+            language=(data.get('primaryLanguage') or {}).get('name'),
+            stars=data.get('stargazerCount', 0),
+            forks=data.get('forkCount', 0),
+            watchers=(data.get('watchers') or {}).get('totalCount', 0),
+            open_issues=(data.get('issues') or {}).get('totalCount', 0),
+            default_branch=(data.get('defaultBranchRef') or {}).get('name', 'main'),
+            is_private=data.get('isPrivate', False),
+            is_fork=data.get('isFork', False),
+            is_archived=data.get('isArchived', False),
+            created_at=parse_datetime(data.get('createdAt')),
+            updated_at=parse_datetime(data.get('updatedAt')),
+            pushed_at=parse_datetime(data.get('pushedAt')),
+            size=0,
+            license=license_name,
         )
