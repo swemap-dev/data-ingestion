@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'risk_dashboard',
     'ninja',
     "corsheaders",
+    'performance_profiling',
 ]
 
 MIDDLEWARE = [
