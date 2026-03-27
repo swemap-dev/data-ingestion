@@ -3,7 +3,7 @@ import logging
 import re
 
 from .blame_generator import generate_blame_ranges
-from .pr_generator import generate_pr_graphql_response, generate_pr_files_response
+from .pr_generator import generate_pr_graphql_response
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,9 @@ class SyntheticGraphQLBackend:
         # Order matters: more specific patterns first.
         if "blame" in query.lower() and "path" in variables:
             return self._handle_blame_query(query, variables)
-        elif "expression" in variables:
-            # File content query uses $expression variable
+        elif "expression" in variables and "path" not in variables:
+            # Standalone file content query (not combined blame+content)
             return self._handle_file_content_query(query, variables)
-        elif "pullRequest" in query and "files" in query and "number" in variables:
-            return self._handle_pr_files_query(query, variables)
         elif "pullRequests" in query:
             return self._handle_merged_prs_query(query, variables)
         elif "ids" in variables:
@@ -75,14 +73,24 @@ class SyntheticGraphQLBackend:
         return result
 
     def _handle_blame_query(self, query, variables):
-        """Handle blame queries from get_raw_blame."""
+        """Handle blame queries from get_raw_blame (now includes inline content)."""
         file_path = variables.get("path", "")
         ranges = generate_blame_ranges(self.repo, file_path)
+
+        # Generate inline content for the combined blame+content query
+        content_bytes = self.repo.get_source_code_for_file(file_path)
+        text = content_bytes.decode("utf-8") if content_bytes else ""
 
         return {
             "repository": {
                 "repo_name": self.config.name,
                 "file_name": file_path,
+                "content": {
+                    "text": text,
+                    "oid": "synthetic",
+                    "byteSize": len(text),
+                    "isBinary": False,
+                },
                 "ref": {
                     "target": {
                         "blame": {
@@ -117,12 +125,7 @@ class SyntheticGraphQLBackend:
         page_size = variables.get("first", 100)
         return generate_pr_graphql_response(self.repo, page_size=page_size, cursor=cursor)
 
-    def _handle_pr_files_query(self, query, variables):
-        """Handle PR files queries from get_pull_request_files."""
-        pr_number = variables.get("number")
-        cursor = variables.get("after")
-        page_size = variables.get("first", 100)
-        return generate_pr_files_response(self.repo, pr_number, page_size=page_size, cursor=cursor)
+
 
     def _handle_ref_commit_query(self, query, variables):
         """Handle ref/commit queries from _get_tree_sha."""

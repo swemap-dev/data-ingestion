@@ -44,14 +44,17 @@ class FileContentsServiceGQL:
             logger.warning(f"Error fetching file content for {file_path}: {e}")
             return None
 
-    def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main") -> Dict[str, Any]:
+    def get_raw_blame(self, owner: str, repo: str, file_path: str, ref: str = "main",
+                      reviewer_cache: Optional[Dict[str, list]] = None) -> Dict[str, Any]:
         """
         Get rich blame data for a specific file using GraphQL.
         Returns blame data dictionary with commit author info and age.
         Return shape mirrors FileContentsService: {"data": {"repository": {…}}}
         """
         query = self.client._load_query("rich_blame")
-        variables = {"owner": owner, "repo": repo, "ref": ref, "path": file_path}
+        content_expr = f"{ref}:{file_path}"
+        variables = {"owner": owner, "repo": repo, "ref": ref, "path": file_path,
+                     "contentExpr": content_expr}
 
         try:
             result = self.client._request(query, variables)
@@ -79,9 +82,25 @@ class FileContentsServiceGQL:
                                 if c_id:
                                     commit_ids.add(c_id)
 
+                            # Use cache to skip already-fetched commits
+                            if reviewer_cache is not None:
+                                uncached_ids = [cid for cid in commit_ids if cid not in reviewer_cache]
+                            else:
+                                uncached_ids = list(commit_ids)
+
                             reviewers_map = {}
-                            if commit_ids:
-                                reviewers_map = self._get_reviewers_for_commits(list(commit_ids))
+                            if reviewer_cache is not None:
+                                # Start with cached entries
+                                for cid in commit_ids:
+                                    if cid in reviewer_cache:
+                                        reviewers_map[cid] = reviewer_cache[cid]
+
+                            if uncached_ids:
+                                fresh = self._get_reviewers_for_commits(uncached_ids)
+                                reviewers_map.update(fresh)
+                                # Update cache with new data
+                                if reviewer_cache is not None:
+                                    reviewer_cache.update(fresh)
 
                             for r in ranges:
                                 c = r.get("commit", {})
@@ -100,6 +119,32 @@ class FileContentsServiceGQL:
             logger.warning(f"Error injecting metadata: {e}")
 
         return data
+
+    def get_blame_with_content(self, owner: str, repo: str, file_path: str,
+                               ref: str = "main",
+                               reviewer_cache: Optional[Dict[str, list]] = None):
+        """
+        Fetch blame data AND file content in a single GraphQL call.
+        Returns (blame_data_dict, content_bytes_or_None).
+        """
+        blame_data = self.get_raw_blame(owner, repo, file_path, ref=ref,
+                                        reviewer_cache=reviewer_cache)
+        if not blame_data:
+            return blame_data, None
+
+        # Extract content from the combined response
+        content_bytes = None
+        try:
+            repo_data = blame_data.get("data", {}).get("repository", {})
+            blob = repo_data.get("content")
+            if blob:
+                text = blob.get("text")
+                if text is not None:
+                    content_bytes = text.encode("utf-8")
+        except Exception as e:
+            logger.warning(f"Error extracting content from blame response for {file_path}: {e}")
+
+        return blame_data, content_bytes
 
     def get_all_file_paths(self, owner: str, repo: str, ref: str = "main") -> List[str]:
         """Get a list of all file paths in the repository."""

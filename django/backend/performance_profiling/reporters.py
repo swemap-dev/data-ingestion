@@ -77,8 +77,9 @@ class ConsoleReporter:
             label = bottleneck[0].replace("_", " ").title()
             print(f"\nBOTTLENECK: {label} ({pct:.1f}% of total)")
 
-        # Top slowest functions
-        sorted_records = sorted(records, key=lambda r: r.duration_seconds, reverse=True)
+        # Top slowest functions (exclude wrapper/entry-point records)
+        real_records = [r for r in records if not r.is_wrapper]
+        sorted_records = sorted(real_records, key=lambda r: r.duration_seconds, reverse=True)
         top_n = min(10, len(sorted_records))
         if top_n > 0:
             print(f"\nTop {top_n} slowest functions:")
@@ -112,8 +113,12 @@ class JSONReporter:
                 "item_count": s["item_count"],
             }
 
+        # Separate wrapper records from real function records
+        real_records = [r for r in records if not r.is_wrapper]
+        wrapper_records = [r for r in records if r.is_wrapper]
+
         functions = []
-        for r in sorted(records, key=lambda r: r.duration_seconds, reverse=True):
+        for r in sorted(real_records, key=lambda r: r.duration_seconds, reverse=True):
             functions.append({
                 "name": r.name,
                 "phase": r.phase,
@@ -124,6 +129,17 @@ class JSONReporter:
                 "throughput": round(r.throughput, 2) if r.throughput else None,
             })
 
+        wrappers = []
+        for r in wrapper_records:
+            wrappers.append({
+                "name": r.name,
+                "phase": r.phase,
+                "category": r.category,
+                "duration_s": round(r.duration_seconds, 6),
+                "peak_memory_bytes": r.peak_memory_bytes,
+                "item_count": r.item_count,
+            })
+
         report = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": config_dict,
@@ -131,6 +147,7 @@ class JSONReporter:
             "total_peak_memory_bytes": global_peak,
             "phases": phases,
             "functions": functions,
+            "wrappers": wrappers,
             "bottleneck": bottleneck,
         }
 

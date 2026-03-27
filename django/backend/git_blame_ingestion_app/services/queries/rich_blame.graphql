@@ -1,5 +1,13 @@
-query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!) {
+query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String!, $contentExpr: String!) {
   repository(owner: $owner, name: $repo) {
+    content: object(expression: $contentExpr) {
+      ... on Blob {
+        text
+        oid
+        byteSize
+        isBinary
+      }
+    }
     ref(qualifiedName: $ref) {
       target {
         ... on Commit {

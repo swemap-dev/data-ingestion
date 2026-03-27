@@ -6,7 +6,6 @@ from celery.contrib import rdb
 from django.conf import settings
 
 from .services.client import GitHubClient
-from .services.file_contents import FileContentsService
 from .services.file_contents_gql import FileContentsServiceGQL
 from .services import ingestion
 from .models import Repo
@@ -14,6 +13,7 @@ from .models import Repo
 logger = logging.getLogger(__name__)
 
 _client = None
+_reviewer_cache = {}
 
 def get_shared_client():
     global _client
@@ -32,7 +32,10 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         client = get_shared_client()
         service = FileContentsServiceGQL(client)
         
-        blame_data = service.get_raw_blame(repo_owner, repo_name, file_path, ref='main') # TODO: include other branches
+        blame_data, content_bytes = service.get_blame_with_content(
+            repo_owner, repo_name, file_path, ref='main',
+            reviewer_cache=_reviewer_cache,
+        )  # TODO: include other branches
         
         if not blame_data:
             logger.warning(f"No blame data returned for {file_path} (possibly empty or GraphQL error)")
@@ -61,8 +64,7 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
                 logger.error(f"ROOT module not found for repo {repo_owner}/{repo_name}. Cannot process file {file_path}")
                 return
         
-        # Fetch file content and perform static analysis
-        content_bytes = service.get_file_content(repo_owner, repo_name, file_path, commit_hash)
+        # Perform static analysis on file content (already fetched with blame)
         ast_summary = None
         if content_bytes is not None:
             from .services.static_analysis import analyze_code_file

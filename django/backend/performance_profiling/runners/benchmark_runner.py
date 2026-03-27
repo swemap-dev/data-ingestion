@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 # Profiling targets: (import_path, function_name, phase, category)
 PROFILE_TARGETS = [
     ("git_blame_ingestion_app.services.file_contents_gql.FileContentsServiceGQL",
-     "get_raw_blame", "blame_processing", "io"),
-    ("git_blame_ingestion_app.services.file_contents_gql.FileContentsServiceGQL",
-     "get_file_content", "blame_processing", "io"),
+     "get_blame_with_content", "blame_processing", "io"),
     ("git_blame_ingestion_app.services.file_contents_gql.FileContentsServiceGQL",
      "get_all_file_paths", "extraction", "io"),
     ("git_blame_ingestion_app.services.static_analysis",
@@ -145,7 +143,7 @@ def run_full_pipeline(config, collector):
     from git_blame_ingestion_app.tasks import initialize
 
     with profile_section("full_pipeline", phase="extraction", category="io",
-                         item_count=config.file_count):
+                         item_count=config.file_count, is_wrapper=True):
         # Apply profiling patches
         active_patches = [p.start() for p in profiling_patches]
 
@@ -183,7 +181,8 @@ def run_phase3_only(config, collector):
         from git_blame_ingestion_app.tasks import finalize_repo_ingestion
 
         with profile_section("finalize_repo_ingestion", phase="finalization",
-                             category="computation", item_count=config.file_count):
+                             category="computation", item_count=config.file_count,
+                             is_wrapper=True):
             finalize_repo_ingestion(repo_obj.id)
     finally:
         for p in profiling_patches:

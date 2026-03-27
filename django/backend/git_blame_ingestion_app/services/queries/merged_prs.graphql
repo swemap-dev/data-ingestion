@@ -10,23 +10,18 @@ query MergedPRs($owner: String!, $repo: String!, $first: Int!, $after: String) {
       nodes {
         number
         title
-        url
-        createdAt
         updatedAt
         mergedAt
-        mergedBy {
-          login
-        }
         author {
           login
         }
-        baseRefName
-        headRefName
-        additions
-        deletions
-        changedFiles
-        mergeCommit {
-          oid
+        files(first: 100) {
+          nodes {
+            path
+          }
+          pageInfo {
+            hasNextPage
+          }
         }
       }
       pageInfo {

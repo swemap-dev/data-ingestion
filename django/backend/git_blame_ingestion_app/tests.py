@@ -5,14 +5,15 @@ from git_blame_ingestion_app.tasks import initialize
 
 class TaskTests(SimpleTestCase):
     @patch('git_blame_ingestion_app.tasks.GitHubClient')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.services.module_resolver.ModuleResolver')
     @patch('git_blame_ingestion_app.tasks.chord')
     @patch('git_blame_ingestion_app.tasks.process_commit_blame')
     @patch('git_blame_ingestion_app.tasks.finalize_repo_ingestion')
     @patch('git_blame_ingestion_app.models.Repo')
     @patch('git_blame_ingestion_app.tasks.ingestion')
-    def test_initialize_uses_chord(self, mock_ingestion, mock_Repo, mock_finalize, mock_process, mock_chord, mock_resolver, mock_service, mock_client):
+    @patch('git_blame_ingestion_app.services.pr_ingestion.ingest_merged_prs')
+    def test_initialize_uses_chord(self, mock_ingest_prs, mock_ingestion, mock_Repo, mock_finalize, mock_process, mock_chord, mock_resolver, mock_service, mock_client):
         # Setup mocks
         mock_client_instance = mock_client.return_value
         mock_client_instance.get_repository.return_value.default_branch = 'main'
@@ -97,7 +98,7 @@ class WebhookAndFallbackTests(TestCase):
         self.assertEqual(mock_process_commit_blame.delay.call_count, 2)
 
     @patch('git_blame_ingestion_app.tasks.ingestion.process_blame_response')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.tasks.get_shared_client')
     def test_process_commit_blame_fallback_to_root(self, mock_get_client, mock_service, mock_process_blame):
         # Setup mocks
@@ -105,13 +106,13 @@ class WebhookAndFallbackTests(TestCase):
         mock_get_client.return_value = mock_client
         mock_srv = MagicMock()
         mock_service.return_value = mock_srv
-        mock_srv.get_raw_blame.return_value = {"some": "data"}
+        mock_srv.get_blame_with_content.return_value = ({"some": "data"}, None)
 
         # First, test success fallback
         process_commit_blame("test-owner", "test-repo", "abc1234", "some/random/file.py")
         
         # Should process with ROOT module ID
-        mock_process_blame.assert_called_once_with(self.root_module.id, {"some": "data"}, "some/random/file.py")
+        mock_process_blame.assert_called_once_with(self.root_module.id, {"some": "data"}, "some/random/file.py", ast_summary=None)
         
         # Next, test what happens if ROOT is missing
         self.root_module.delete()
@@ -159,10 +160,11 @@ class BrainFileE2ETests(TestCase):
         ]
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch('git_blame_ingestion_app.services.pr_ingestion.ingest_merged_prs')
     @patch('git_blame_ingestion_app.tasks.get_shared_client')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.tasks.GitHubClient')
-    def test_e2e_initialize_and_webhook_brain_file(self, mock_gh_client, mock_service_class, mock_get_client):
+    def test_e2e_initialize_and_webhook_brain_file(self, mock_gh_client, mock_service_class, mock_get_client, mock_ingest_prs):
         # 1. Setup mocks
         mock_client = MagicMock()
         mock_gh_client.return_value = mock_client
@@ -174,14 +176,8 @@ class BrainFileE2ETests(TestCase):
         mock_service._get_tree_sha.return_value = ('sha123', None, None)
         mock_service.get_all_file_paths.return_value = self.file_paths
         
-        def fake_get_content(owner, repo, file_path, ref="main"):
-            if "utils.py" in file_path:
-                return self.mock_brain_content
-            return self.mock_dep_content
-        mock_service.get_file_content.side_effect = fake_get_content
-        
         # Valid dummy blame response
-        mock_service.get_raw_blame.return_value = {
+        blame_response = {
             "data": {
                 "repository": {
                     "ref": {
@@ -196,6 +192,12 @@ class BrainFileE2ETests(TestCase):
                 }
             }
         }
+        
+        def fake_get_blame_with_content(owner, repo, file_path, ref="main", reviewer_cache=None):
+            if "utils.py" in file_path:
+                return blame_response, self.mock_brain_content
+            return blame_response, self.mock_dep_content
+        mock_service.get_blame_with_content.side_effect = fake_get_blame_with_content
         
         # 2. Run initialize using a fake chord to ensure synchronous execution
         from git_blame_ingestion_app.tasks import initialize

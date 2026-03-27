@@ -21,12 +21,18 @@ def generate_pr_graphql_response(synthetic_repo, page_size=100, cursor=None):
 
     nodes = []
     for pr in page:
+        file_nodes = [{"path": fp} for fp in pr.file_paths[:100]]
+        has_more_files = len(pr.file_paths) > 100
         nodes.append({
             "number": pr.number,
             "title": pr.title,
             "mergedAt": pr.merged_at.isoformat().replace("+00:00", "Z"),
             "updatedAt": pr.merged_at.isoformat().replace("+00:00", "Z"),
             "author": {"login": pr.author_login},
+            "files": {
+                "nodes": file_nodes,
+                "pageInfo": {"hasNextPage": has_more_files},
+            },
         })
 
     return {

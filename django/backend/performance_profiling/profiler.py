@@ -16,6 +16,7 @@ class TimingRecord:
     end_time: float = 0.0
     peak_memory_bytes: int = 0
     item_count: int = 0
+    is_wrapper: bool = False
 
     @property
     def duration_seconds(self) -> float:
@@ -66,21 +67,26 @@ class ProfileCollector:
                     "functions": [],
                 }
             s = summary[r.phase]
-            s["duration_s"] += r.duration_seconds
+            # Exclude wrapper records from duration sum to avoid double-counting
+            if not r.is_wrapper:
+                s["duration_s"] += r.duration_seconds
             s["peak_memory_bytes"] = max(s["peak_memory_bytes"], r.peak_memory_bytes)
-            s["item_count"] += r.item_count
+            if not r.is_wrapper:
+                s["item_count"] += r.item_count
             s["functions"].append({
                 "name": r.name,
                 "duration_s": r.duration_seconds,
                 "category": r.category,
                 "item_count": r.item_count,
                 "throughput": r.throughput,
+                "is_wrapper": r.is_wrapper,
             })
         return summary
 
 
 @contextmanager
-def profile_section(name, phase="unknown", category="unknown", item_count=0):
+def profile_section(name, phase="unknown", category="unknown", item_count=0,
+                    is_wrapper=False):
     """Context manager that records timing + memory for a code block."""
     collector = ProfileCollector()
 
@@ -106,6 +112,7 @@ def profile_section(name, phase="unknown", category="unknown", item_count=0):
             end_time=end,
             peak_memory_bytes=peak,
             item_count=item_count,
+            is_wrapper=is_wrapper,
         )
         collector.add_record(record)
 
