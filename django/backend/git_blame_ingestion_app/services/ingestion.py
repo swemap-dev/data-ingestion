@@ -129,14 +129,26 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_
         # Transaction will be rolled back by @transaction.atomic
 
 def get_or_create_engineer(name: str, email: str) -> Engineer:
-    """Upserts engineer and returns object"""
-    # Check by email first (unique constraint)
-    # Using update_or_create in case name changed, though email is primary identifier
-    engineer, created = Engineer.objects.update_or_create(
-        email=email,
-        defaults={'name': name}
-    )
-    return engineer
+    """Gets or creates an engineer by email. Safe for concurrent Celery workers."""
+    from django.db import IntegrityError, OperationalError
+    import time
+
+    for attempt in range(3):
+        try:
+            engineer, created = Engineer.objects.get_or_create(
+                email=email,
+                defaults={'name': name}
+            )
+            return engineer
+        except (IntegrityError, OperationalError) as e:
+            if attempt < 2:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            # Last resort: just try a plain get
+            try:
+                return Engineer.objects.get(email=email)
+            except Engineer.DoesNotExist:
+                raise e
 
 def recalculate_metrics(file_id: int, total_lines: int):
     """

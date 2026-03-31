@@ -83,5 +83,5 @@ def calculate_knowledge_distribution(module_id: int) -> Dict[str, Any]:
         "abandoned_code": is_abandoned,
         "abandoned_details": abandoned_details,
         "silo_type": silo_type,
-        "distribution_snapshot": writers[:3] # Return top 3 for UI context
+        "distribution_snapshot": writers[:5] # Return top 3 for UI context
     }

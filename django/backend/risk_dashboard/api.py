@@ -99,3 +99,64 @@ def get_change_frequency(request, module_id: int):
         "average_score": average_score,
     }
 
+
+class ChildRiskSchema(Schema):
+    module_id: int
+    module_name: str
+    brain_file_count: int = 0
+    structural_risk_score: int = 0
+    hotspot_count: int = 0
+    file_count: int = 0
+
+class AggregateRiskSchema(Schema):
+    module_name: str
+    own_risk: ChildRiskSchema
+    children: List[ChildRiskSchema]
+    rolled_up_risk: ChildRiskSchema
+
+def _get_module_risk(module) -> dict:
+    """Compute risk summary for a single module from its pre-calculated file metrics."""
+    files = File.objects.filter(module_id_id=module.id)
+    hotspot_threshold = settings.RISK_CONFIG.get("CHURN_HOTSPOT_THRESHOLD", 0.8)
+    return {
+        "module_id": module.id,
+        "module_name": module.name or "ROOT",
+        "brain_file_count": sum(1 for f in files if f.is_brain_file),
+        "structural_risk_score": sum(f.structural_risk_score for f in files),
+        "hotspot_count": sum(1 for f in files if f.change_frequency_score >= hotspot_threshold),
+        "file_count": files.count(),
+    }
+
+def _get_all_descendants(module):
+    """Recursively collect all descendant modules."""
+    descendants = []
+    for child in module.children.all():
+        descendants.append(child)
+        descendants.extend(_get_all_descendants(child))
+    return descendants
+
+@router.get("/modules/{module_id}/aggregate-risk", response=AggregateRiskSchema)
+def get_aggregate_risk(request, module_id: int):
+    from git_blame_ingestion_app.models import Module
+    module = Module.objects.get(id=module_id)
+
+    own_risk = _get_module_risk(module)
+    descendants = _get_all_descendants(module)
+    children_risks = [_get_module_risk(d) for d in descendants]
+
+    # Roll up: sum own + all descendants
+    rolled_up = {
+        "module_id": module.id,
+        "module_name": module.name or "ROOT",
+        "brain_file_count": own_risk["brain_file_count"] + sum(c["brain_file_count"] for c in children_risks),
+        "structural_risk_score": own_risk["structural_risk_score"] + sum(c["structural_risk_score"] for c in children_risks),
+        "hotspot_count": own_risk["hotspot_count"] + sum(c["hotspot_count"] for c in children_risks),
+        "file_count": own_risk["file_count"] + sum(c["file_count"] for c in children_risks),
+    }
+
+    return {
+        "module_name": module.name or "ROOT",
+        "own_risk": own_risk,
+        "children": children_risks,
+        "rolled_up_risk": rolled_up,
+    }

@@ -91,7 +91,8 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         import os
         from .services.module_resolver import ModuleResolver
         from .services import ingestion
-
+        enqueued_count = 0
+        
         for commit in payload.commits:
             commit_hash = commit.id
             changed_files = commit.added + commit.modified
@@ -133,3 +134,27 @@ def init_all(request):
     """
     result = initialize_all.delay()
     return {"status": "triggered", "task_id": result.id}
+
+
+def _build_module_tree(module):
+    """Recursively builds a nested dict for a module and its children."""
+    children = module.children.all().order_by('name')
+    return {
+        "module_id": module.id,
+        "module_name": module.name or "ROOT",
+        "dir_path": module.dir_path or "",
+        "children": [_build_module_tree(child) for child in children],
+    }
+
+@api.get("/modules/tree")
+def get_module_tree(request, repo_id: int):
+    """
+    Returns the module hierarchy as a nested JSON tree.
+    Root modules (parent=None) are the top-level nodes.
+    """
+    root_modules = Module.objects.filter(
+        repo_id=repo_id, parent__isnull=True
+    ).order_by('name')
+
+    return [_build_module_tree(m) for m in root_modules]
+

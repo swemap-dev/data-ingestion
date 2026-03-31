@@ -57,12 +57,8 @@ def process_commit_blame(self, repo_owner, repo_name, commit_hash, file_path):
         # If no module is found, this file belongs to the ROOT module
         if not module_id:
             logger.warning(f"Could not resolve module for {file_path}. Falling back to ROOT module.")
-            try:
-                module_obj = ingestion.get_module(repo_obj.id, "ROOT")
-                module_id = module_obj.id
-            except ingestion.Module.DoesNotExist:
-                logger.error(f"ROOT module not found for repo {repo_owner}/{repo_name}. Cannot process file {file_path}")
-                return
+            root_module = ingestion.get_or_create_module(repo_obj.id, "ROOT", "")
+            module_id = root_module.id
         
         # Perform static analysis on file content (already fetched with blame)
         ast_summary = None
@@ -134,10 +130,37 @@ def initialize(repo_url):
                 # Upsert module using ingestion service
                 # Name will be the dir path (empty string for root)
                 name_for_module = d if d else "ROOT"
-                ingestion.get_or_create_module(repo_obj.id, name_for_module, d)
+                mod = ingestion.get_or_create_module(repo_obj.id, name_for_module, d)
+                logger.info(f"Created/found module '{name_for_module}' (id={mod.id}, dir_path='{d}')")
             except Exception as e:
-                logger.error(f"Error creating module {d} for {owner}/{name}: {e}")
+                logger.error(f"Error creating module '{d}' for {owner}/{name}: {e}", exc_info=True)
 
+        # Verify ROOT exists before dispatching chord
+        from .models import Module as ModuleModel
+        root_check = ModuleModel.objects.filter(repo=repo_obj, name="ROOT").first()
+        if root_check:
+            logger.info(f"ROOT module verified: id={root_check.id}, dir_path='{root_check.dir_path}'")
+        else:
+            logger.error(f"ROOT module MISSING after creation loop! module_roots contained '': {'' in module_roots}")
+
+        # Second pass: wire up parent references for hierarchical modules
+        from .models import Module as ModuleModel
+        for d in module_roots:
+            if d == "":
+                continue  # ROOT has no parent
+            parent_dir = resolver.get_parent_module(d)
+            if parent_dir is not None:
+                name_for_module = d if d else "ROOT"
+                parent_name = parent_dir if parent_dir else "ROOT"
+                try:
+                    module_obj = ModuleModel.objects.get(repo=repo_obj, name=name_for_module)
+                    parent_obj = ModuleModel.objects.get(repo=repo_obj, name=parent_name)
+                    if module_obj.parent_id != parent_obj.id:
+                        module_obj.parent = parent_obj
+                        module_obj.save(update_fields=['parent'])
+                        logger.info(f"Set parent of '{name_for_module}' -> '{parent_name}'")
+                except ModuleModel.DoesNotExist as e:
+                    logger.warning(f"Could not set parent for module '{d}': {e}")
         
         # Ingest merged PRs before blame chord so data is ready for finalization
         from .services.pr_ingestion import ingest_merged_prs

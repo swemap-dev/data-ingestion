@@ -19,7 +19,9 @@ class ModuleResolver:
         # Python
         "pyproject.toml", "setup.py", "requirements.txt",
         # General/C++
-        "CMakeLists.txt", "Makefile"
+        "CMakeLists.txt", "Makefile",
+        # Python
+        "__init__.py"
     }
 
     # Directories that should never be module roots, even if they contain markers
@@ -27,12 +29,17 @@ class ModuleResolver:
         "node_modules", "target", "build", "dist", "venv", ".git", ".idea", ".vscode"
     }
 
-    def __init__(self, all_file_paths: List[str]):
+    def __init__(self, all_file_paths: List[str], manual_modules: Optional[List[str]] = None):
         """
         Initialize with a list of all file paths in the repository.
+        If `manual_modules` is provided, those directories are used as modules,
+        bypassing the build-marker discovery logic.
         """
         self.all_file_paths = all_file_paths
-        self.known_modules = self._discover_modules()
+        if manual_modules is not None:
+            self.known_modules = set(manual_modules)
+        else:
+            self.known_modules = self._discover_modules()
 
     def _discover_modules(self) -> Set[str]:
         """
@@ -94,4 +101,26 @@ class ModuleResolver:
              return ""
              
         # "Fallback: If the search reaches the Repository Root without finding a marker, the file belongs to the Root_Module."
+        return ""
+
+    def get_parent_module(self, dir_path: str) -> Optional[str]:
+        """
+        Returns the dir_path of the nearest parent module for a given module directory.
+        Returns "" (ROOT) if no intermediate parent is found, or None if dir_path is ROOT itself.
+        """
+        if dir_path == "":
+            return None  # ROOT has no parent
+
+        current = os.path.dirname(dir_path)
+        while current:
+            if current in self.known_modules:
+                return current
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+
+        # Reached root — return "" (ROOT module) if it's a known module
+        if "" in self.known_modules:
+            return ""
         return ""
