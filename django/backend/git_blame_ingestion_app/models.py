@@ -75,6 +75,7 @@ class Skill(models.Model):
 
 class Module(models.Model):
     repo = models.ForeignKey(Repo, on_delete=models.CASCADE, related_name='modules')
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     name = models.CharField(max_length=255, null=True, blank=True)
     dir_path = models.CharField(max_length=512, null=True, blank=True)
     description = models.TextField(null=True, blank=True)

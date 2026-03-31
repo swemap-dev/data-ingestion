@@ -5,14 +5,16 @@ from git_blame_ingestion_app.tasks import initialize
 
 class TaskTests(SimpleTestCase):
     @patch('git_blame_ingestion_app.tasks.GitHubClient')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.services.module_resolver.ModuleResolver')
     @patch('git_blame_ingestion_app.tasks.chord')
     @patch('git_blame_ingestion_app.tasks.process_commit_blame')
     @patch('git_blame_ingestion_app.tasks.finalize_repo_ingestion')
     @patch('git_blame_ingestion_app.models.Repo')
     @patch('git_blame_ingestion_app.tasks.ingestion')
-    def test_initialize_uses_chord(self, mock_ingestion, mock_Repo, mock_finalize, mock_process, mock_chord, mock_resolver, mock_service, mock_client):
+    @patch('git_blame_ingestion_app.services.pr_ingestion.ingest_merged_prs')
+    @patch('git_blame_ingestion_app.models.Module')
+    def test_initialize_uses_chord(self, mock_Module, mock_ingest_prs, mock_ingestion, mock_Repo, mock_finalize, mock_process, mock_chord, mock_resolver, mock_service, mock_client):
         # Setup mocks
         mock_client_instance = mock_client.return_value
         mock_client_instance.get_repository.return_value.default_branch = 'main'
@@ -94,10 +96,10 @@ class WebhookAndFallbackTests(TestCase):
         self.assertTrue(new_module_exists)
         
         # Verify task was enqueued
-        self.assertEqual(mock_process_commit_blame.delay.call_count, 2)
+        self.assertEqual(mock_process_commit_blame.s.call_count, 2)
 
     @patch('git_blame_ingestion_app.tasks.ingestion.process_blame_response')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.tasks.get_shared_client')
     def test_process_commit_blame_fallback_to_root(self, mock_get_client, mock_service, mock_process_blame):
         # Setup mocks
@@ -105,13 +107,13 @@ class WebhookAndFallbackTests(TestCase):
         mock_get_client.return_value = mock_client
         mock_srv = MagicMock()
         mock_service.return_value = mock_srv
-        mock_srv.get_raw_blame.return_value = {"some": "data"}
+        mock_srv.get_blame_with_content.return_value = ({"some": "data"}, None)
 
         # First, test success fallback
         process_commit_blame("test-owner", "test-repo", "abc1234", "some/random/file.py")
         
         # Should process with ROOT module ID
-        mock_process_blame.assert_called_once_with(self.root_module.id, {"some": "data"}, "some/random/file.py")
+        mock_process_blame.assert_called_once_with(self.root_module.id, {"some": "data"}, "some/random/file.py", ast_summary=None)
         
         # Next, test what happens if ROOT is missing
         self.root_module.delete()
@@ -159,10 +161,11 @@ class BrainFileE2ETests(TestCase):
         ]
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch('git_blame_ingestion_app.services.pr_ingestion.ingest_merged_prs')
     @patch('git_blame_ingestion_app.tasks.get_shared_client')
-    @patch('git_blame_ingestion_app.tasks.FileContentsService')
+    @patch('git_blame_ingestion_app.tasks.FileContentsServiceGQL')
     @patch('git_blame_ingestion_app.tasks.GitHubClient')
-    def test_e2e_initialize_and_webhook_brain_file(self, mock_gh_client, mock_service_class, mock_get_client):
+    def test_e2e_initialize_and_webhook_brain_file(self, mock_gh_client, mock_service_class, mock_get_client, mock_ingest_prs):
         # 1. Setup mocks
         mock_client = MagicMock()
         mock_gh_client.return_value = mock_client
@@ -174,14 +177,8 @@ class BrainFileE2ETests(TestCase):
         mock_service._get_tree_sha.return_value = ('sha123', None, None)
         mock_service.get_all_file_paths.return_value = self.file_paths
         
-        def fake_get_content(owner, repo, file_path, ref="main"):
-            if "utils.py" in file_path:
-                return self.mock_brain_content
-            return self.mock_dep_content
-        mock_service.get_file_content.side_effect = fake_get_content
-        
         # Valid dummy blame response
-        mock_service.get_raw_blame.return_value = {
+        blame_response = {
             "data": {
                 "repository": {
                     "ref": {
@@ -196,6 +193,12 @@ class BrainFileE2ETests(TestCase):
                 }
             }
         }
+        
+        def fake_get_blame_with_content(owner, repo, file_path, ref="main", reviewer_cache=None):
+            if "utils.py" in file_path:
+                return blame_response, self.mock_brain_content
+            return blame_response, self.mock_dep_content
+        mock_service.get_blame_with_content.side_effect = fake_get_blame_with_content
         
         # 2. Run initialize using a fake chord to ensure synchronous execution
         from git_blame_ingestion_app.tasks import initialize
@@ -249,3 +252,105 @@ class BrainFileE2ETests(TestCase):
         brain_file.refresh_from_db()
         self.assertEqual(brain_file.inbound_coupling, 5, "Inbound coupling should dynamically increase from the webhook")
 
+
+class ModuleHierarchyTests(TestCase):
+    """Tests for hierarchical module parent-child relationships."""
+
+    def setUp(self):
+        from git_blame_ingestion_app.models import Repo, Module
+        self.repo = Repo.objects.create(name="conda", owner="conda", url="https://github.com/conda/conda")
+        
+        # Create a 3-level hierarchy:
+        #   ROOT
+        #   └── conda
+        #       ├── conda/core
+        #       └── conda/plugins
+        #           └── conda/plugins/virtual_packages
+        self.root = Module.objects.create(repo=self.repo, name="ROOT", dir_path="")
+        self.conda = Module.objects.create(repo=self.repo, name="conda", dir_path="conda", parent=self.root)
+        self.core = Module.objects.create(repo=self.repo, name="conda/core", dir_path="conda/core", parent=self.conda)
+        self.plugins = Module.objects.create(repo=self.repo, name="conda/plugins", dir_path="conda/plugins", parent=self.conda)
+        self.virt_pkgs = Module.objects.create(repo=self.repo, name="conda/plugins/virtual_packages", dir_path="conda/plugins/virtual_packages", parent=self.plugins)
+
+    def test_parent_child_relationships(self):
+        """Verify parent FK creates correct tree structure."""
+        self.assertIsNone(self.root.parent)
+        self.assertEqual(self.conda.parent, self.root)
+        self.assertEqual(self.core.parent, self.conda)
+        self.assertEqual(self.plugins.parent, self.conda)
+        self.assertEqual(self.virt_pkgs.parent, self.plugins)
+
+        # Verify children traversal
+        self.assertEqual(set(self.conda.children.all()), {self.core, self.plugins})
+        self.assertEqual(set(self.plugins.children.all()), {self.virt_pkgs})
+        self.assertEqual(self.core.children.count(), 0)
+
+    def test_module_resolver_get_parent_module(self):
+        """Verify ModuleResolver.get_parent_module finds nearest ancestor."""
+        from git_blame_ingestion_app.services.module_resolver import ModuleResolver
+        
+        resolver = ModuleResolver([], manual_modules=[
+            "", "conda", "conda/core", "conda/plugins", "conda/plugins/virtual_packages"
+        ])
+        
+        self.assertIsNone(resolver.get_parent_module(""))
+        self.assertEqual(resolver.get_parent_module("conda"), "")
+        self.assertEqual(resolver.get_parent_module("conda/core"), "conda")
+        self.assertEqual(resolver.get_parent_module("conda/plugins"), "conda")
+        self.assertEqual(resolver.get_parent_module("conda/plugins/virtual_packages"), "conda/plugins")
+
+    def test_modules_tree_endpoint(self):
+        """Verify /modules/tree returns nested JSON structure."""
+        response = self.client.get(f"/api/modules/tree?repo_id={self.repo.id}")
+        self.assertEqual(response.status_code, 200)
+        
+        tree = response.json()
+        # ROOT is the only top-level node (parent=None)
+        self.assertEqual(len(tree), 1)
+        root_node = tree[0]
+        self.assertEqual(root_node["module_name"], "ROOT")
+        
+        # ROOT has one child: conda
+        self.assertEqual(len(root_node["children"]), 1)
+        conda_node = root_node["children"][0]
+        self.assertEqual(conda_node["module_name"], "conda")
+        
+        # conda has two children: core and plugins
+        self.assertEqual(len(conda_node["children"]), 2)
+        child_names = {c["module_name"] for c in conda_node["children"]}
+        self.assertEqual(child_names, {"conda/core", "conda/plugins"})
+
+    def test_aggregate_risk_endpoint(self):
+        """Verify /aggregate-risk rolls up metrics from descendants."""
+        from git_blame_ingestion_app.models import File
+        
+        # Add a brain file to the leaf module
+        File.objects.create(
+            module_id=self.virt_pkgs,
+            file_path="conda/plugins/virtual_packages/cuda.py",
+            line_count=200,
+            is_brain_file=True,
+            structural_risk_score=5,
+        )
+        # Add a normal file to the parent
+        File.objects.create(
+            module_id=self.plugins,
+            file_path="conda/plugins/main.py",
+            line_count=100,
+            is_brain_file=False,
+            structural_risk_score=2,
+        )
+        
+        response = self.client.get(f"/api/risk/modules/{self.plugins.id}/aggregate-risk")
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertEqual(data["module_name"], "conda/plugins")
+        
+        # Own risk: 0 brain files, 2 structural risk
+        self.assertEqual(data["own_risk"]["brain_file_count"], 0)
+        self.assertEqual(data["own_risk"]["structural_risk_score"], 2)
+        
+        # Rolled up: 1 brain file (from child), 7 structural risk (2+5)
+        self.assertEqual(data["rolled_up_risk"]["brain_file_count"], 1)
+        self.assertEqual(data["rolled_up_risk"]["structural_risk_score"], 7)

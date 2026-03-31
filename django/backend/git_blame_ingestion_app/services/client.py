@@ -2,8 +2,6 @@ import os
 import sys
 import requests
 import json
-import urllib.request
-import urllib.error
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pathlib import Path
@@ -12,7 +10,7 @@ if __name__ == "__main__":
     # Allow running directly for testing
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'backend', '.env'))
     from git_blame_ingestion_app.services.repository import RepositoryMetadata
 
     class _FakeSettings:
@@ -33,12 +31,14 @@ class GitHubClient:
         
         if self.token:
             self.session.headers.update({
-                'Authorization': f'token {self.token}',
-                'Accept': 'application/vnd.github.v3+json'
+                'Authorization': f'bearer {self.token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/vnd.github.v3+json',
             })
         else:
             self.session.headers.update({
-                'Accept': 'application/vnd.github.v3+json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/vnd.github.v3+json',
             })
 
         # Add Retry Logic
@@ -66,27 +66,23 @@ class GitHubClient:
     
     def _request(self, query: str, variables: dict) -> dict:
         """Send a GraphQL request and return the parsed JSON response."""
-        payload = json.dumps({"query": query, "variables": variables}).encode()
-        req = urllib.request.Request(
-            self.base_url,
-            data=payload,
-            headers={
-                "Authorization": f"bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-        )
+        payload = {"query": query, "variables": variables}
+
         try:
-            with urllib.request.urlopen(req) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            body = e.read().decode()
-            raise RuntimeError(f"GitHub API error {e.code}: {body}")
+            response = self.session.post(self.base_url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.HTTPError as e:
+            raise RuntimeError(f"GitHub API error {e.response.status_code}: {e.response.text}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"GitHub API request failed: {e}")
 
         if "errors" in data:
             messages = [err["message"] for err in data["errors"]]
             raise RuntimeError(f"GraphQL errors: {'; '.join(messages)}")
 
         return data["data"]
+
 
         
     def get_repository_metadata(self, owner: str, repo: str) -> Dict[str, Any]:
@@ -133,6 +129,11 @@ class GitHubClient:
                 all_before_since = False
                 merged_at = datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00"))
                 if merged_at >= since:
+                    # Extract inline file paths from the files subfield
+                    files_conn = pr.get("files", {})
+                    file_nodes = files_conn.get("nodes", [])
+                    pr["_file_paths"] = [f["path"] for f in file_nodes]
+                    pr["_files_truncated"] = files_conn.get("pageInfo", {}).get("hasNextPage", False)
                     merged_pulls.append(pr)
 
             if all_before_since or not pr_connection["pageInfo"]["hasNextPage"]:
@@ -143,35 +144,6 @@ class GitHubClient:
         return merged_pulls
     
 
-    def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> List[str]:
-        """Fetch all changed file paths for a single pull request.
-
-        If a PR has more than 100 files, this paginates through the remaining
-        pages using the pr_files query.
-        """
-        query = self._load_query("pr_files")
-        filenames = []
-        cursor = None
-
-        while True:
-            data = self._request(query, {
-                "owner": owner,
-                "repo": repo,
-                "number": pr_number,
-                "first": 100,
-                "after": cursor,
-            })
-
-            files_connection = data["repository"]["pullRequest"]["files"]
-            for f in files_connection["nodes"]:
-                filenames.append(f["path"])
-
-            if not files_connection["pageInfo"]["hasNextPage"]:
-                break
-
-            cursor = files_connection["pageInfo"]["endCursor"]
-
-        return filenames
 
 
 if __name__ == "__main__":
@@ -194,10 +166,13 @@ if __name__ == "__main__":
         author = pr["author"]["login"] if pr["author"] else "unknown"
         print(f"#{pr['number']:<5} {pr['mergedAt']:<22} {author:<16} {pr['title']}")
 
-    # Fetch files for the first PR as a demo
+    # Show inline files for the first PR as a demo
     if prs:
         pr_num = prs[0]["number"]
-        files = client.get_pull_request_files(OWNER, REPO, pr_num)
-        print(f"\nFiles changed in PR #{pr_num}:")
+        files = prs[0].get("_file_paths", [])
+        truncated = prs[0].get("_files_truncated", False)
+        print(f"\nFiles changed in PR #{pr_num} ({len(files)} inline):")
         for f in files:
             print(f"  {f}")
+        if truncated:
+            print(f"  ... (PR has >100 files, list truncated)")

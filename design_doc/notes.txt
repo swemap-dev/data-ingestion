@@ -1,0 +1,29 @@
+Small:
+=== Benchmark: synthetic-small (500 files, 200 PRs) ===
+
+Phase                    Duration     Throughput  Memory Peak
+------------------------------------------------------------
+Extraction                   3.6s              -      28.3 MB
+Blame Processing             2.2m              -      23.1 MB
+Finalization                 5.1s              -      28.3 MB
+------------------------------------------------------------
+Total                        2.4m                     28.3 MB
+
+BOTTLENECK: Blame Processing (93.8% of total)
+
+Top 10 slowest functions:
+   1. ingest_merged_prs                            3.6s  (io)
+   2. calculate_module_brain_files              739.3ms  (computation)
+   3. calculate_module_brain_files              730.3ms  (computation)
+   4. calculate_module_brain_files              726.8ms  (computation)
+   5. calculate_module_brain_files              633.1ms  (computation)
+   6. calculate_module_brain_files              619.0ms  (computation)
+   7. calculate_change_frequency                562.0ms  (computation)
+   8. process_blame_response                    502.6ms  (db)
+   9. process_blame_response                    410.8ms  (db)
+  10. process_blame_response                    410.4ms  (db)
+
+Benchmark complete.
+
+
+Medium
