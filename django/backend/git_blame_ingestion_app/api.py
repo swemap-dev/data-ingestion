@@ -126,11 +126,16 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         
     return {"status": "ignored", "reason": f"Event {event} not handled"}
 
+class InitAllSchema(Schema):
+    ref: Optional[str] = None
+
 # TODO: the repos in initialize_all() are hardcoded; change to be configurable
+
 @api.post("/init-all")
-def init_all(request):
+def init_all(request, payload: InitAllSchema = None):
     """
     Triggers initialization for all default repositories.
+    Optionally accepts a ref (branch or SHA) to pin ingestion.
     """
     result = initialize_all.delay()
     return {"status": "triggered", "task_id": result.id}
