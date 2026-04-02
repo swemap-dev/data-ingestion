@@ -168,4 +168,12 @@ RISK_CONFIG = {
     "CHURN_QUIET_VARIANCE": 0.01,
     "CHURN_QUIET_DEFAULT": 3,
     "CHURN_HOTSPOT_THRESHOLD": 8,
+    # Structural Hub Thresholds
+    "GLOBAL_HUB_ABS_THRESHOLD": 30,       # N_F >= 30 incoming dependencies
+    "GLOBAL_HUB_REL_THRESHOLD": 0.15,     # N_F >= 15% of all repo files
+    "BOUNDARY_HUB_EXT_MIN": 5,            # E_F >= 5 external importers
+    "BOUNDARY_HUB_EXT_RATIO": 0.80,       # E_F / (I_F + E_F) >= 80%
+    "LOCAL_HUB_MIN_MODULE_SIZE": 3,        # S_M >= 3 sibling files
+    "LOCAL_HUB_INTERNAL_RATIO": 0.50,      # I_F / S_M >= 50%
+    "LOCAL_HUB_INTERNAL_DOMINANCE": 0.50,  # I_F / (I_F + E_F) >= 50%
 }

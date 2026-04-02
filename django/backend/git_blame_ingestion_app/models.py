@@ -22,6 +22,11 @@ class DependencyType(models.TextChoices):
     INTERNAL = 'INTERNAL', _('Internal')
     EXTERNAL = 'EXTERNAL', _('External')
 
+class HubType(models.TextChoices):
+    GLOBAL = 'GLOBAL', _('Global Hub')
+    BOUNDARY = 'BOUNDARY', _('Boundary Hub')
+    LOCAL = 'LOCAL', _('Local Hub')
+
 # 2. Independent Models
 
 class Engineer(models.Model):
@@ -102,11 +107,18 @@ class File(models.Model):
     line_count = models.IntegerField(null=True, blank=True)
     ast_summary = models.JSONField(null=True, blank=True)
     
-    # Brain File Metrics
-    inbound_coupling = models.IntegerField(default=0)
+    # Structural Hub Metrics
+    inbound_coupling = models.IntegerField(default=0)    # N_F: total unique importers repo-wide
+    internal_imports = models.IntegerField(default=0)    # I_F: importers from same module
+    external_imports = models.IntegerField(default=0)    # E_F: importers from other modules
     module_density = models.FloatField(default=0.0)
     loc_count = models.IntegerField(default=0)
-    is_brain_file = models.BooleanField(default=False)
+    hub_type = models.CharField(
+        max_length=20,
+        choices=HubType.choices,
+        null=True,
+        blank=True,
+    )
 
     # Structural Complexity Metrics
     max_nesting_depth = models.IntegerField(default=0)

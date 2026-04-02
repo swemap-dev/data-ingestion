@@ -95,9 +95,6 @@ def initialize(repo_url, ref=None):
         client = GitHubClient()
         service = FileContentsServiceGQL(client)
 
-        # Get default branch
-        service = FileContentsService(client)
-
         repo_meta = client.get_repository(owner, name)
         # Use provided ref, otherwise fall back to default branch
         ref = ref or repo_meta.default_branch
@@ -215,12 +212,12 @@ def recalculate_affected_modules(module_ids):
     Recalculate metrics for specific modules after a webhook push.
     Only processes the modules that had files modified in the push.
     """
-    from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
+    from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
     from risk_dashboard.services.structural_complexity import calculate_structural_complexity
     from risk_dashboard.services.change_frequency import calculate_change_frequency
     from .services.pr_ingestion import ingest_merged_prs
 
-    # PR ingestion + change frequency are repo-wide — run once, not per module
+    # PR ingestion, change frequency, and structural hubs are repo-wide — run once, not per module
     if module_ids:
         from .models import Module
         first_module = Module.objects.get(id=module_ids[0])
@@ -231,8 +228,12 @@ def recalculate_affected_modules(module_ids):
     for module_id in module_ids:
         logger.info(f"Recalculating metrics for affected module {module_id}")
         ingestion.calculate_module_metrics(module_id)
-        calculate_module_brain_files(module_id)
         calculate_structural_complexity(module_id)
+
+    # Structural hubs require the full repo graph — run once after per-module metrics
+    if module_ids:
+        logger.info(f"Recalculating structural hubs for repo {repo.id}")
+        calculate_structural_hubs(repo.id)
 
     logger.info(f"Recalculated metrics for {len(module_ids)} affected module(s)")
 
@@ -246,7 +247,7 @@ def finalize_repo_ingestion(repo_id):
     
     try:
         from .models import Module
-        from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
+        from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
         from risk_dashboard.services.structural_complexity import calculate_structural_complexity
         from risk_dashboard.services.change_frequency import calculate_change_frequency
         modules = Module.objects.filter(repo_id=repo_id)
@@ -255,13 +256,13 @@ def finalize_repo_ingestion(repo_id):
             logger.info(f"Calculating metrics for module {module.id} ({module.name})")
             ingestion.calculate_module_metrics(module.id)
 
-            logger.info(f"Calculating Brain Files for module {module.id}")
-            calculate_module_brain_files(module.id)
-
             logger.info(f"Calculating Structural Complexity for module {module.id}")
             calculate_structural_complexity(module.id)
 
-        # Change frequency is repo-wide (percentile ranking requires all files)
+        # Structural hubs + change frequency are repo-wide
+        logger.info(f"Calculating Structural Hubs for repo {repo_id}")
+        calculate_structural_hubs(repo_id)
+
         logger.info(f"Calculating Change Frequency for repo {repo_id}")
         calculate_change_frequency(repo_id)
 

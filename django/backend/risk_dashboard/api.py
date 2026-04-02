@@ -4,7 +4,7 @@ from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
 from git_blame_ingestion_app.models import File
-from .services.brain_file_analysis import calculate_module_brain_files
+from .services.brain_file_analysis import calculate_structural_hubs
 
 router = Router()
 
@@ -104,7 +104,9 @@ def get_change_frequency(request, module_id: int):
 class ChildRiskSchema(Schema):
     module_id: int
     module_name: str
-    brain_file_count: int = 0
+    global_hub_count: int = 0
+    boundary_hub_count: int = 0
+    local_hub_count: int = 0
     structural_risk_score: int = 0
     hotspot_count: int = 0
     file_count: int = 0
@@ -122,7 +124,9 @@ def _get_module_risk(module) -> dict:
     return {
         "module_id": module.id,
         "module_name": module.name or "ROOT",
-        "brain_file_count": sum(1 for f in files if f.is_brain_file),
+        "global_hub_count": sum(1 for f in files if f.hub_type == 'GLOBAL'),
+        "boundary_hub_count": sum(1 for f in files if f.hub_type == 'BOUNDARY'),
+        "local_hub_count": sum(1 for f in files if f.hub_type == 'LOCAL'),
         "structural_risk_score": sum(f.structural_risk_score for f in files),
         "hotspot_count": sum(1 for f in files if f.change_frequency_score >= hotspot_threshold),
         "file_count": files.count(),
@@ -149,7 +153,9 @@ def get_aggregate_risk(request, module_id: int):
     rolled_up = {
         "module_id": module.id,
         "module_name": module.name or "ROOT",
-        "brain_file_count": own_risk["brain_file_count"] + sum(c["brain_file_count"] for c in children_risks),
+        "global_hub_count": own_risk["global_hub_count"] + sum(c["global_hub_count"] for c in children_risks),
+        "boundary_hub_count": own_risk["boundary_hub_count"] + sum(c["boundary_hub_count"] for c in children_risks),
+        "local_hub_count": own_risk["local_hub_count"] + sum(c["local_hub_count"] for c in children_risks),
         "structural_risk_score": own_risk["structural_risk_score"] + sum(c["structural_risk_score"] for c in children_risks),
         "hotspot_count": own_risk["hotspot_count"] + sum(c["hotspot_count"] for c in children_risks),
         "file_count": own_risk["file_count"] + sum(c["file_count"] for c in children_risks),
@@ -161,26 +167,61 @@ def get_aggregate_risk(request, module_id: int):
         "children": children_risks,
         "rolled_up_risk": rolled_up,
     }
-  
-class BrainFileSchema(Schema):
-    file_path: str
-    is_brain_file: bool
-    inbound_coupling: int
-    module_density: float
-    loc_count: Optional[int] = None
 
-@router.get("/modules/{module_id}/brain-files", response=List[BrainFileSchema])
-def get_brain_files(request, module_id: int):
-    from git_blame_ingestion_app.models import File
-    files = File.objects.filter(module_id_id=module_id).values(
-        "file_path", "is_brain_file", "inbound_coupling", "module_density", "loc_count"
-    )
-    return list(files)
+class HubFileEntrySchema(Schema):
+    path: str
+    module_id: int
+    module: str
+    loc: int = 0
+    global_coupling: int = 0
+    external_imports: int = 0
+    internal_imports: int = 0
+    module_density: float = 0.0
 
-@router.post("/modules/{module_id}/recalculate-brain-files")
-def recalculate_brain_files(request, module_id: int):
-    calculate_module_brain_files(module_id)
-    files = File.objects.filter(module_id=module_id).values(
-        "file_path", "is_brain_file", "inbound_coupling", "module_density", "loc_count"
+class HubListSchema(Schema):
+    type: str
+    total_count: int
+    files: List[HubFileEntrySchema]
+
+def _get_hub_files(repo_id: int, hub_type: str, k: int = None) -> dict:
+    files = list(
+        File.objects.filter(module_id__repo_id=repo_id, hub_type=hub_type)
+        .select_related('module_id')
     )
-    return list(files)
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "type": hub_type,
+        "total_count": total_count,
+        "files": [
+            {
+                "path": f.file_path,
+                "module_id": f.module_id_id,
+                "module": f.module_id.dir_path or f.module_id.name or "",
+                "loc": f.loc_count,
+                "global_coupling": f.inbound_coupling,
+                "external_imports": f.external_imports,
+                "internal_imports": f.internal_imports,
+                "module_density": f.module_density,
+            }
+            for f in files
+        ],
+    }
+
+@router.get("/repos/{repo_id}/global-hubs", response=HubListSchema)
+def get_global_hubs(request, repo_id: int, k: int = None):
+    return _get_hub_files(repo_id, 'GLOBAL', k)
+
+@router.get("/repos/{repo_id}/boundary-hubs", response=HubListSchema)
+def get_boundary_hubs(request, repo_id: int, k: int = None):
+    return _get_hub_files(repo_id, 'BOUNDARY', k)
+
+@router.get("/repos/{repo_id}/local-hubs", response=HubListSchema)
+def get_local_hubs(request, repo_id: int, k: int = None):
+    return _get_hub_files(repo_id, 'LOCAL', k)
+
+@router.post("/repos/{repo_id}/recalculate-structural-hubs")
+def recalculate_structural_hubs(request, repo_id: int):
+    calculate_structural_hubs(repo_id)
+    return {"status": "ok"}

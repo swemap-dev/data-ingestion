@@ -221,10 +221,11 @@ class BrainFileE2ETests(TestCase):
         # Assert file count is 6 (requirements.txt + utils + a,b,c,d)
         self.assertEqual(File.objects.filter(module_id=module.id).count(), 6)
         
-        brain_file = File.objects.get(module_id=module.id, file_path="src/utils.py")
-        
-        self.assertTrue(brain_file.is_brain_file, "utils.py should be flagged as a brain file based on threshold config")
-        self.assertEqual(brain_file.inbound_coupling, 4)
+        hub_file = File.objects.get(module_id=module.id, file_path="src/utils.py")
+
+        # 4 importers out of 5 source files = 80% >= 15% relative threshold → Global Hub
+        self.assertEqual(hub_file.hub_type, 'GLOBAL', "utils.py should be flagged as a Global Hub")
+        self.assertEqual(hub_file.inbound_coupling, 4)
         
         # 4. Test webhook incremental update
         # We simulate a new webhook that adds 'src/e.py' which also imports 'src/utils.py'
@@ -244,13 +245,13 @@ class BrainFileE2ETests(TestCase):
         response = self.client.post("/api/webhook", data=payload, content_type="application/json", headers={"X-GitHub-Event": "push"})
         self.assertEqual(response.status_code, 200)
          
-        # Emulate the calculation trigger that handles recalculation (or test the manual trigger)
-        from risk_dashboard.services.brain_file_analysis import calculate_module_brain_files
-        calculate_module_brain_files(module.id)
-         
-        # Verify brain file coupling increased
-        brain_file.refresh_from_db()
-        self.assertEqual(brain_file.inbound_coupling, 5, "Inbound coupling should dynamically increase from the webhook")
+        # Emulate the calculation trigger that handles recalculation
+        from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
+        calculate_structural_hubs(repo.id)
+
+        # Verify hub coupling increased
+        hub_file.refresh_from_db()
+        self.assertEqual(hub_file.inbound_coupling, 5, "Inbound coupling should dynamically increase from the webhook")
 
 
 class ModuleHierarchyTests(TestCase):
@@ -324,12 +325,12 @@ class ModuleHierarchyTests(TestCase):
         """Verify /aggregate-risk rolls up metrics from descendants."""
         from git_blame_ingestion_app.models import File
         
-        # Add a brain file to the leaf module
+        # Add a global hub file to the leaf module
         File.objects.create(
             module_id=self.virt_pkgs,
             file_path="conda/plugins/virtual_packages/cuda.py",
             line_count=200,
-            is_brain_file=True,
+            hub_type='GLOBAL',
             structural_risk_score=5,
         )
         # Add a normal file to the parent
@@ -337,20 +338,20 @@ class ModuleHierarchyTests(TestCase):
             module_id=self.plugins,
             file_path="conda/plugins/main.py",
             line_count=100,
-            is_brain_file=False,
+            hub_type=None,
             structural_risk_score=2,
         )
-        
+
         response = self.client.get(f"/api/risk/modules/{self.plugins.id}/aggregate-risk")
         self.assertEqual(response.status_code, 200)
-        
+
         data = response.json()
         self.assertEqual(data["module_name"], "conda/plugins")
-        
-        # Own risk: 0 brain files, 2 structural risk
-        self.assertEqual(data["own_risk"]["brain_file_count"], 0)
+
+        # Own risk: 0 hubs, 2 structural risk
+        self.assertEqual(data["own_risk"]["global_hub_count"], 0)
         self.assertEqual(data["own_risk"]["structural_risk_score"], 2)
-        
-        # Rolled up: 1 brain file (from child), 7 structural risk (2+5)
-        self.assertEqual(data["rolled_up_risk"]["brain_file_count"], 1)
+
+        # Rolled up: 1 global hub (from child), 7 structural risk (2+5)
+        self.assertEqual(data["rolled_up_risk"]["global_hub_count"], 1)
         self.assertEqual(data["rolled_up_risk"]["structural_risk_score"], 7)
