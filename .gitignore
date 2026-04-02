@@ -21,3 +21,4 @@ build/
 scripts/
 legacy/
 .claude/
+data/

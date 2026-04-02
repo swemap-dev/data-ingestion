@@ -97,24 +97,20 @@ class RiskAnalyticsTests(SimpleTestCase):
 
 from django.test import TestCase
 from git_blame_ingestion_app.models import Repo, Module, File, PullRequest, PullRequestFile
-from .services.brain_file_analysis import calculate_module_brain_files
+from .services.brain_file_analysis import calculate_structural_hubs
 
-class BrainFileAnalysisTests(TestCase):
+class StructuralHubAnalysisTests(TestCase):
     def setUp(self):
         self.repo = Repo.objects.create(name="test-repo", owner="test-owner", url="https://github.com/test-owner/test-repo")
         self.module = Module.objects.create(repo=self.repo, name="src", dir_path="src")
-        
-        # Create 5 files to meet MIN_MODULE_SIZE (5)
-        # 1 central file (brain file), 4 dependent files
-        
-        # Central file: size > 500, imported by all 4 other files (Density = 4 / (5 - 1) = 1.0 > 0.8)
-        self.brain_file = File.objects.create(
+
+        # 5 files: utils.py imported by all 4 others
+        self.hub_file = File.objects.create(
             module_id_id=self.module.id,
             file_path="src/utils.py",
             line_count=600,
             ast_summary={"loc": 600, "imports": []}
         )
-        
         self.dep1 = File.objects.create(
             module_id_id=self.module.id,
             file_path="src/a.py",
@@ -140,30 +136,25 @@ class BrainFileAnalysisTests(TestCase):
             ast_summary={"loc": 100, "imports": ["src.utils"]}
         )
 
-    def test_calculate_module_brain_files(self):
-        calculate_module_brain_files(self.module.id)
-        
-        # Refresh from DB
-        self.brain_file.refresh_from_db()
-        self.dep1.refresh_from_db()
-        
-        # Assertions
-        self.assertTrue(self.brain_file.is_brain_file, "File should be a brain file")
-        self.assertEqual(self.brain_file.inbound_coupling, 4)
-        self.assertEqual(self.brain_file.module_density, 1.0)
-        
-        self.assertFalse(self.dep1.is_brain_file)
-        self.assertEqual(self.dep1.inbound_coupling, 0)
-        self.assertEqual(self.dep1.module_density, 0.0)
+    def test_global_hub_by_relative_threshold(self):
+        """utils.py imported by 4/5 = 80% of repo files → Global Hub."""
+        calculate_structural_hubs(self.repo.id)
 
-    def test_small_module_ignores_brain_files(self):
-        # Remove a dependency so module size < MIN_MODULE_SIZE (5)
-        self.dep4.delete()
-        
-        calculate_module_brain_files(self.module.id)
-        self.brain_file.refresh_from_db()
-        
-        self.assertFalse(self.brain_file.is_brain_file, "Small modules should not have Brain Files")
+        self.hub_file.refresh_from_db()
+        self.dep1.refresh_from_db()
+
+        self.assertEqual(self.hub_file.hub_type, 'GLOBAL')
+        self.assertEqual(self.hub_file.inbound_coupling, 4)
+        self.assertEqual(self.hub_file.module_density, 1.0)
+
+        self.assertIsNone(self.dep1.hub_type)
+        self.assertEqual(self.dep1.inbound_coupling, 0)
+
+    def test_non_hub_files_have_no_type(self):
+        """Files with no importers should have hub_type=None."""
+        calculate_structural_hubs(self.repo.id)
+        self.dep1.refresh_from_db()
+        self.assertIsNone(self.dep1.hub_type)
 
 
 class StructuralComplexityTests(TestCase):
@@ -305,12 +296,7 @@ from risk_dashboard.services.structural_complexity import (
     NESTING_PENALTY,
     INHERITANCE_PENALTY,
 )
-from risk_dashboard.services.brain_file_analysis import (
-    calculate_module_brain_files,
-    USAGE_THRESHOLD,
-    LINES_THRESHOLD,
-    MIN_MODULE_SIZE,
-)
+from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
 
 
 class DeepInheritanceStressTests(TestCase):
@@ -742,271 +728,346 @@ class NestingDepthServiceStressTests(TestCase):
         self.assertEqual(f.structural_risk_score, 0)
 
 
-class BrainFileStressTests(TestCase):
-    """Stress tests for brain file analysis."""
+class StructuralHubStressTests(TestCase):
+    """Stress tests for structural hub classification (Global, Boundary, Local)."""
 
     def setUp(self):
-        self.repo = Repo.objects.create(name="brain-repo", owner="brain-owner", url="https://github.com/brain/repo")
-        self.module = Module.objects.create(repo=self.repo, name="mod", dir_path="mod")
+        self.repo = Repo.objects.create(name="hub-repo", owner="hub-owner", url="https://github.com/hub/repo")
+        self.mod_a = Module.objects.create(repo=self.repo, name="mod_a", dir_path="mod_a")
+        self.mod_b = Module.objects.create(repo=self.repo, name="mod_b", dir_path="mod_b")
 
-    def _create_file(self, path, loc=100, imports=None, line_count=None):
+    def _create_file(self, module, path, loc=100, imports=None):
         return File.objects.create(
-            module_id_id=self.module.id,
+            module_id_id=module.id,
             file_path=path,
-            line_count=line_count if line_count is not None else loc,
+            line_count=loc,
             ast_summary={"loc": loc, "imports": imports or []},
         )
 
-    def _create_standard_module(self, n=5, brain_loc=600, dep_imports=None):
-        """Helper: create a module with 1 brain candidate + (n-1) dependents."""
-        if dep_imports is None:
-            dep_imports = ["mod.utils"]
-        brain = self._create_file("mod/utils.py", loc=brain_loc)
-        deps = []
-        for i in range(n - 1):
-            deps.append(self._create_file(f"mod/dep{i}.py", loc=100, imports=dep_imports))
-        return brain, deps
+    # ── Global Hub Tests ─────────────────────────────────────────────
 
-    def test_density_exact_threshold(self):
-        """Module where brain file density == USAGE_THRESHOLD (0.8) qualifies."""
-        # 6 files: brain imported by 4 out of 5 others => density = 4/5 = 0.8
-        brain = self._create_file("mod/utils.py", loc=600)
+    def test_global_hub_by_relative_threshold(self):
+        """File imported by >= 15% of repo files → Global Hub."""
+        # 7 files, utils imported by 2 → 2/7 ≈ 28.6% >= 15%
+        hub = self._create_file(self.mod_a, "mod_a/utils.py")
+        self._create_file(self.mod_a, "mod_a/a.py", imports=["mod_a.utils"])
+        self._create_file(self.mod_a, "mod_a/b.py", imports=["mod_a.utils"])
+        self._create_file(self.mod_a, "mod_a/c.py")
+        self._create_file(self.mod_b, "mod_b/x.py")
+        self._create_file(self.mod_b, "mod_b/y.py")
+        self._create_file(self.mod_b, "mod_b/z.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertEqual(hub.hub_type, 'GLOBAL')
+        self.assertEqual(hub.inbound_coupling, 2)
+
+    def test_global_hub_by_absolute_threshold(self):
+        """File imported by >= 30 files → Global Hub (absolute threshold)."""
+        hub = self._create_file(self.mod_a, "mod_a/core.py")
+        # Create 200 files to make relative threshold irrelevant, 30 import core
+        for i in range(30):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.core"])
+        for i in range(170):
+            self._create_file(self.mod_b, f"mod_b/other{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertEqual(hub.hub_type, 'GLOBAL')
+        self.assertEqual(hub.inbound_coupling, 30)
+
+    def test_below_global_thresholds_not_global(self):
+        """File just below both global thresholds → Not Global."""
+        # 100 files, imported by 14 → 14% < 15%, 14 < 30
+        hub = self._create_file(self.mod_a, "mod_a/utils.py")
+        for i in range(14):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.utils"])
+        for i in range(85):
+            self._create_file(self.mod_b, f"mod_b/other{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertNotEqual(hub.hub_type, 'GLOBAL')
+
+    # ── Boundary Hub Tests ───────────────────────────────────────────
+
+    def test_boundary_hub_classification(self):
+        """File with E_F >= 5 and E_F/(I_F+E_F) >= 80% → Boundary Hub."""
+        # 100 total files so relative threshold won't trigger global (need < 15%)
+        facade = self._create_file(self.mod_a, "mod_a/api.py")
+        # 6 external importers from mod_b
+        for i in range(6):
+            self._create_file(self.mod_b, f"mod_b/consumer{i}.py", imports=["mod_a.api"])
+        # 1 internal importer → ratio = 6/7 ≈ 85.7% >= 80%
+        self._create_file(self.mod_a, "mod_a/internal.py", imports=["mod_a.api"])
+        # Pad repo to keep below global threshold
+        for i in range(92):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        facade.refresh_from_db()
+        self.assertEqual(facade.hub_type, 'BOUNDARY')
+        self.assertEqual(facade.external_imports, 6)
+        self.assertEqual(facade.internal_imports, 1)
+
+    def test_boundary_hub_needs_min_external(self):
+        """File with E_F < 5 should NOT be a Boundary Hub even with high ratio."""
+        facade = self._create_file(self.mod_a, "mod_a/api.py")
+        # Only 4 external importers (< 5)
         for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
-        self._create_file("mod/standalone.py", loc=100, imports=[])
+            self._create_file(self.mod_b, f"mod_b/consumer{i}.py", imports=["mod_a.api"])
+        for i in range(95):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertEqual(brain.module_density, 0.8)
-        self.assertTrue(brain.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        facade.refresh_from_db()
+        self.assertNotEqual(facade.hub_type, 'BOUNDARY')
 
-    def test_density_just_below_threshold(self):
-        """Density 0.6 < 0.8 — should NOT be a brain file."""
-        # 6 files: brain imported by 3 out of 5 => density = 3/5 = 0.6
-        brain = self._create_file("mod/utils.py", loc=600)
-        for i in range(3):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
-        for i in range(2):
-            self._create_file(f"mod/other{i}.py", loc=100, imports=[])
-
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertAlmostEqual(brain.module_density, 0.6)
-        self.assertFalse(brain.is_brain_file)
-
-    def test_large_module_21_files(self):
-        """21-file module — brain file imported by 16/20 = 0.8 density."""
-        brain = self._create_file("mod/core.py", loc=600)
-        for i in range(16):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.core"])
-        for i in range(4):
-            self._create_file(f"mod/other{i}.py", loc=100, imports=[])
-
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertEqual(brain.module_density, 0.8)
-        self.assertTrue(brain.is_brain_file)
-
-    def test_loc_threshold_strict_greater_than(self):
-        """File with loc == LINES_THRESHOLD (50) should NOT qualify (strict >)."""
-        brain = self._create_file("mod/utils.py", loc=50)  # exactly at threshold
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=10, imports=["mod.utils"])
-
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertTrue(brain.module_density >= USAGE_THRESHOLD)
-        self.assertFalse(brain.is_brain_file)  # loc not > threshold
-
-    def test_loc_just_above_threshold(self):
-        """File with loc == 51 qualifies when above LINES_THRESHOLD."""
-        brain = self._create_file("mod/utils.py", loc=51)
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=10, imports=["mod.utils"])
-
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertTrue(brain.is_brain_file)
-
-    def test_multiple_brain_files(self):
-        """Two files both qualify as brain files."""
-        brain1 = self._create_file("mod/utils.py", loc=600)
-        brain2 = self._create_file("mod/helpers.py", loc=600)
+    def test_boundary_hub_needs_high_ratio(self):
+        """File with E_F >= 5 but ratio < 80% should NOT be Boundary."""
+        facade = self._create_file(self.mod_a, "mod_a/api.py")
+        # 5 external, 3 internal → ratio = 5/8 = 62.5% < 80%
         for i in range(5):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils", "mod.helpers"])
+            self._create_file(self.mod_b, f"mod_b/consumer{i}.py", imports=["mod_a.api"])
+        for i in range(3):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.api"])
+        for i in range(91):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain1.refresh_from_db()
-        brain2.refresh_from_db()
-        # density for each = 5/6 ≈ 0.833
-        self.assertTrue(brain1.is_brain_file)
-        self.assertTrue(brain2.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        facade.refresh_from_db()
+        self.assertNotEqual(facade.hub_type, 'BOUNDARY')
+
+    # ── Local Hub Tests ──────────────────────────────────────────────
+
+    def test_local_hub_classification(self):
+        """File imported by >= 70% siblings with >= 50% internal → Local Hub."""
+        # Module with 5 files (4 siblings). 3 internal importers.
+        # I_F/S_M = 3/4 = 0.75 >= 0.70. I_F/(I_F+E_F) = 3/3 = 1.0 >= 0.50
+        hub = self._create_file(self.mod_a, "mod_a/state.py")
+        for i in range(3):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.state"])
+        self._create_file(self.mod_a, "mod_a/standalone.py")
+        # Pad repo to prevent global hub classification
+        for i in range(95):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertEqual(hub.hub_type, 'LOCAL')
+        self.assertEqual(hub.internal_imports, 3)
+
+    def test_local_hub_needs_min_module_size(self):
+        """Module with < 3 siblings (S_M < 3) cannot have Local Hubs."""
+        # 3 files in module → S_M = 2 < 3
+        hub = self._create_file(self.mod_a, "mod_a/state.py")
+        self._create_file(self.mod_a, "mod_a/a.py", imports=["mod_a.state"])
+        self._create_file(self.mod_a, "mod_a/b.py", imports=["mod_a.state"])
+        for i in range(97):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertNotEqual(hub.hub_type, 'LOCAL')
+
+    def test_local_hub_fails_internal_dominance(self):
+        """File with mostly external usage should NOT be Local Hub."""
+        hub = self._create_file(self.mod_a, "mod_a/state.py")
+        # 3 internal importers (I_F/S_M would pass)
+        for i in range(3):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.state"])
+        self._create_file(self.mod_a, "mod_a/standalone.py")
+        # 4 external importers → I_F/(I_F+E_F) = 3/7 ≈ 0.43 < 0.50
+        for i in range(4):
+            self._create_file(self.mod_b, f"mod_b/ext{i}.py", imports=["mod_a.state"])
+        for i in range(89):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertNotEqual(hub.hub_type, 'LOCAL')
+
+    # ── Edge Cases ───────────────────────────────────────────────────
 
     def test_self_import_excluded(self):
         """A file importing itself should not count toward inbound coupling."""
-        brain = self._create_file("mod/utils.py", loc=600, imports=["mod.utils"])
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
+        hub = self._create_file(self.mod_a, "mod_a/utils.py", imports=["mod_a.utils"])
+        self._create_file(self.mod_a, "mod_a/a.py", imports=["mod_a.utils"])
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertEqual(brain.inbound_coupling, 4)  # self-import excluded
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertEqual(hub.inbound_coupling, 1)
 
     def test_circular_imports(self):
         """A imports B, B imports A — both get inbound_coupling=1."""
-        a = self._create_file("mod/a.py", loc=600, imports=["mod.b"])
-        b = self._create_file("mod/b.py", loc=600, imports=["mod.a"])
-        for i in range(3):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=[])
+        a = self._create_file(self.mod_a, "mod_a/a.py", imports=["mod_a.b"])
+        b = self._create_file(self.mod_a, "mod_a/b.py", imports=["mod_a.a"])
 
-        calculate_module_brain_files(self.module.id)
+        calculate_structural_hubs(self.repo.id)
         a.refresh_from_db()
         b.refresh_from_db()
         self.assertEqual(a.inbound_coupling, 1)
         self.assertEqual(b.inbound_coupling, 1)
 
-    def test_no_imports_in_module(self):
-        """Module where no file imports anything — no brain files."""
+    def test_no_imports_no_hubs(self):
+        """Repo where no file imports anything — no hubs."""
         for i in range(5):
-            self._create_file(f"mod/f{i}.py", loc=600, imports=[])
+            self._create_file(self.mod_a, f"mod_a/f{i}.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain_files = File.objects.filter(module_id_id=self.module.id, is_brain_file=True)
-        self.assertEqual(brain_files.count(), 0)
-
-    def test_all_files_import_each_other(self):
-        """Every file imports every other file — all have density 1.0 if large enough."""
-        names = [f"mod/f{i}.py" for i in range(5)]
-        import_names = [f"mod.f{i}" for i in range(5)]
-        for i, name in enumerate(names):
-            # Each file imports all other modules
-            self._create_file(name, loc=600, imports=import_names)
-
-        calculate_module_brain_files(self.module.id)
-        for name in names:
-            f = File.objects.get(file_path=name)
-            self.assertEqual(f.module_density, 1.0)
-            self.assertTrue(f.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        hubs = File.objects.filter(module_id__repo_id=self.repo.id).exclude(hub_type=None)
+        self.assertEqual(hubs.count(), 0)
 
     def test_import_dotted_path_matching(self):
-        """Dotted import 'pkga.utils' matches 'mod/pkga/utils.py'."""
-        brain = self._create_file("mod/pkga/utils.py", loc=600)
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["pkga.utils"])
+        """Dotted import 'pkga.utils' matches 'mod_a/pkga/utils.py'."""
+        target = self._create_file(self.mod_a, "mod_a/pkga/utils.py")
+        self._create_file(self.mod_a, "mod_a/dep.py", imports=["pkga.utils"])
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertEqual(brain.inbound_coupling, 4)
+        calculate_structural_hubs(self.repo.id)
+        target.refresh_from_db()
+        self.assertEqual(target.inbound_coupling, 1)
 
     def test_import_basename_collision_longest_path_wins(self):
-        """Two files named 'utils.py' in different dirs — longest path matches first."""
-        deep = self._create_file("mod/pkga/utils.py", loc=600)
-        shallow = self._create_file("mod/utils.py", loc=600)
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["pkga.utils"])
+        """Two files named 'utils.py' — longest path matches first."""
+        deep = self._create_file(self.mod_a, "mod_a/pkga/utils.py")
+        shallow = self._create_file(self.mod_a, "mod_a/utils.py")
+        self._create_file(self.mod_a, "mod_a/dep.py", imports=["pkga.utils"])
 
-        calculate_module_brain_files(self.module.id)
+        calculate_structural_hubs(self.repo.id)
         deep.refresh_from_db()
         shallow.refresh_from_db()
-        # "pkga.utils" -> "pkga/utils" matches "mod/pkga/utils.py" first (longer path)
-        self.assertEqual(deep.inbound_coupling, 4)
+        self.assertEqual(deep.inbound_coupling, 1)
         self.assertEqual(shallow.inbound_coupling, 0)
 
-    def test_min_module_size_boundary_4_files(self):
-        """Module with 4 files (< MIN_MODULE_SIZE=5) — no brain files."""
-        brain = self._create_file("mod/utils.py", loc=600)
-        for i in range(3):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
+    def test_non_code_files_excluded(self):
+        """Non-source files (e.g. .json) should not be classified as hubs."""
+        config = self._create_file(self.mod_a, "mod_a/package.json")
+        self._create_file(self.mod_a, "mod_a/a.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertFalse(brain.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        config.refresh_from_db()
+        self.assertIsNone(config.hub_type)
+        self.assertEqual(config.inbound_coupling, 0)
 
-    def test_min_module_size_boundary_5_files(self):
-        """Module with exactly 5 files (== MIN_MODULE_SIZE) — analysis runs."""
-        brain, _ = self._create_standard_module(n=5, brain_loc=600)
+    def test_duplicate_imports_counted_once(self):
+        """File importing same module twice — counts as one unique importer."""
+        target = self._create_file(self.mod_a, "mod_a/utils.py")
+        self._create_file(self.mod_a, "mod_a/dep.py", imports=["mod_a.utils", "mod_a.utils"])
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertTrue(brain.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        target.refresh_from_db()
+        self.assertEqual(target.inbound_coupling, 1)
 
-    def test_loc_percentile_high_repo(self):
-        """When repo p90 LOC is very high, LINES_THRESHOLD is used (whichever is smaller)."""
-        # Create files in another module with huge LOC to raise p90
-        other_module = Module.objects.create(repo=self.repo, name="big", dir_path="big")
-        for i in range(10):
-            File.objects.create(
-                module_id_id=other_module.id,
-                file_path=f"big/huge{i}.py",
-                line_count=10000,
-                ast_summary={"loc": 10000, "imports": []},
-                loc_count=10000,
-            )
+    def test_external_only_imports_no_hubs(self):
+        """Imports that don't match any repo file produce no hubs."""
+        for i in range(5):
+            self._create_file(self.mod_a, f"mod_a/f{i}.py", imports=["numpy", "pandas"])
 
-        brain, _ = self._create_standard_module(n=5, brain_loc=600)
+        calculate_structural_hubs(self.repo.id)
+        hubs = File.objects.filter(module_id__repo_id=self.repo.id).exclude(hub_type=None)
+        self.assertEqual(hubs.count(), 0)
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        # p90 is very high, so loc_threshold = min(50, p90) = 50
-        # brain has loc=600 > 50, so qualifies
-        self.assertTrue(brain.is_brain_file)
-
-    def test_loc_percentile_low_repo(self):
-        """When all repo files have loc=10, p90 is 10 — threshold is min(50, 10)=10."""
-        brain = self._create_file("mod/utils.py", loc=15)
-        for i in range(4):
-            self._create_file(f"mod/dep{i}.py", loc=10, imports=["mod.utils"])
-
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        # p90 of [15,10,10,10,10] = 15 (idx=4*0.9=3 -> 10 or 15 depending on exact calc)
-        # loc_threshold = min(50, p90) = p90
-        # brain loc=15 > p90 threshold
-        self.assertTrue(brain.module_density >= USAGE_THRESHOLD)
+    def test_empty_repo(self):
+        """Repo with 0 files — should not raise."""
+        calculate_structural_hubs(self.repo.id)
 
     def test_none_ast_summary_handling(self):
-        """Files with None ast_summary don't break brain file analysis."""
-        brain = self._create_file("mod/utils.py", loc=600)
-        for i in range(3):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
-        # File with None ast_summary
+        """Files with None ast_summary don't break analysis."""
         File.objects.create(
-            module_id_id=self.module.id,
-            file_path="mod/broken.py",
+            module_id_id=self.mod_a.id,
+            file_path="mod_a/broken.py",
             line_count=50,
             ast_summary=None,
         )
+        self._create_file(self.mod_a, "mod_a/ok.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        # 5 files total, 3 import brain => density = 3/4 = 0.75 < 0.8
-        self.assertFalse(brain.is_brain_file)
+        calculate_structural_hubs(self.repo.id)
+        # No crash is the assertion
 
-    def test_duplicate_imports_counted_once(self):
-        """File importing the same module twice — inbound coupling counts unique importers."""
-        brain = self._create_file("mod/utils.py", loc=600)
-        # dep0 imports utils twice
-        self._create_file("mod/dep0.py", loc=100, imports=["mod.utils", "mod.utils"])
-        for i in range(1, 4):
-            self._create_file(f"mod/dep{i}.py", loc=100, imports=["mod.utils"])
+    def test_global_hubs_excluded_from_local_metrics(self):
+        """Global Hub importers should not inflate I_F/E_F for non-global files."""
+        # Create a global hub (imported by many) that also imports a local file
+        # The local file's metrics should not count the global hub as an importer
+        global_hub = self._create_file(self.mod_a, "mod_a/config.py")
+        local_file = self._create_file(self.mod_a, "mod_a/helper.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain.refresh_from_db()
-        self.assertEqual(brain.inbound_coupling, 4)  # unique importers
+        # Make config.py a global hub by having many files import it
+        for i in range(4):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.config"])
+        # Padding file so helper.py (1/7 = 14.3%) doesn't hit global threshold
+        self._create_file(self.mod_a, "mod_a/standalone.py")
+        # Also have config.py import helper.py
+        global_hub.ast_summary = {"loc": 100, "imports": ["mod_a.helper"]}
+        global_hub.save()
 
-    def test_external_only_imports(self):
-        """All imports are external (no matches) — no brain files."""
+        # 7 total files in repo, config imported by 4 → 4/7 ≈ 57% >= 15% → Global
+        calculate_structural_hubs(self.repo.id)
+
+        global_hub.refresh_from_db()
+        local_file.refresh_from_db()
+        self.assertEqual(global_hub.hub_type, 'GLOBAL')
+        # helper.py's adjusted I_F should exclude the global hub importer
+        self.assertEqual(local_file.internal_imports, 0)
+
+    def test_module_density_computation(self):
+        """module_density should be I_F / (module_size - 1)."""
+        hub = self._create_file(self.mod_a, "mod_a/core.py")
+        for i in range(3):
+            self._create_file(self.mod_a, f"mod_a/dep{i}.py", imports=["mod_a.core"])
+        # 4 files in module, 3 import core → density = 3/3 = 1.0
+
+        calculate_structural_hubs(self.repo.id)
+        hub.refresh_from_db()
+        self.assertEqual(hub.module_density, 1.0)
+
+    # ── __init__.py import resolution tests ────────────────────────────
+
+    def test_init_py_receives_package_level_imports(self):
+        """'from mod_a.pkg import Solver' resolves to __init__.py (not siblings)."""
+        # Parser emits "mod_a.pkg" for "from mod_a.pkg import Solver"
+        init_file = self._create_file(self.mod_a, "mod_a/pkg/__init__.py")
+        self._create_file(self.mod_a, "mod_a/pkg/helper.py")
+
+        self._create_file(self.mod_b, "mod_b/a.py", imports=["mod_a.pkg"])
+        self._create_file(self.mod_b, "mod_b/b.py", imports=["mod_a.pkg"])
+
+        calculate_structural_hubs(self.repo.id)
+        init_file.refresh_from_db()
+        self.assertEqual(init_file.inbound_coupling, 2)
+
+    def test_import_submodule_file_not_init(self):
+        """'from mod_a.pkg.yaml_utils import X' resolves to yaml_utils.py, not __init__.py."""
+        # Parser emits "mod_a.pkg.yaml_utils" for "from mod_a.pkg.yaml_utils import load"
+        init_file = self._create_file(self.mod_a, "mod_a/pkg/__init__.py")
+        sibling = self._create_file(self.mod_a, "mod_a/pkg/yaml_utils.py")
+
         for i in range(5):
-            self._create_file(f"mod/f{i}.py", loc=600, imports=["numpy", "pandas"])
+            self._create_file(self.mod_b, f"mod_b/consumer{i}.py",
+                              imports=["mod_a.pkg.yaml_utils"])
+        for i in range(93):
+            self._create_file(self.mod_b, f"mod_b/pad{i}.py")
 
-        calculate_module_brain_files(self.module.id)
-        brain_files = File.objects.filter(module_id_id=self.module.id, is_brain_file=True)
-        self.assertEqual(brain_files.count(), 0)
+        calculate_structural_hubs(self.repo.id)
+        init_file.refresh_from_db()
+        sibling.refresh_from_db()
 
-    def test_empty_module(self):
-        """Module with 0 files — should not raise."""
-        calculate_module_brain_files(self.module.id)
-        # No files, no error
+        self.assertEqual(sibling.inbound_coupling, 5)
+        self.assertEqual(init_file.inbound_coupling, 0)
+
+    def test_init_py_not_matched_by_substring(self):
+        """__init__.py should not be matched by loose substring of a sibling import."""
+        # Verifies exact stem matching prevents the old substring bug
+        init_file = self._create_file(self.mod_a, "mod_a/pkg/__init__.py")
+        target = self._create_file(self.mod_a, "mod_a/pkg/target.py")
+        self._create_file(self.mod_a, "mod_a/pkg/other.py")
+
+        self._create_file(self.mod_b, "mod_b/dep.py", imports=["mod_a.pkg.target"])
+
+        calculate_structural_hubs(self.repo.id)
+        init_file.refresh_from_db()
+        target.refresh_from_db()
+        self.assertEqual(target.inbound_coupling, 1)
+        self.assertEqual(init_file.inbound_coupling, 0)
 
 
 # ──────────────────────────────────────────────────────────────────────
