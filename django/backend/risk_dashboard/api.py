@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from ninja import Router, Schema
+from ninja import Router, Schema, Query
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
@@ -56,6 +56,65 @@ def get_structural_complexity(request, module_id: int):
         "files_with_deep_nesting": deep_nesting,
         "files_with_deep_inheritance": deep_inheritance,
         "total_structural_risk_score": total_risk,
+    }
+
+
+class NestingInheritanceFileSchema(Schema):
+    file_path: str
+    max_nesting_depth: int = 0
+    max_inheritance_depth: int = 0
+
+class NestingInheritanceSchema(Schema):
+    files: List[NestingInheritanceFileSchema]
+    total_files: int
+
+@router.get("/modules/{module_id}/nesting-inheritance", response=NestingInheritanceSchema)
+def get_nesting_inheritance(request, module_id: int):
+    files = File.objects.filter(module_id_id=module_id)
+    file_data = [
+        {
+            "file_path": f.file_path,
+            "max_nesting_depth": f.max_nesting_depth,
+            "max_inheritance_depth": f.max_inheritance_depth,
+        }
+        for f in files
+    ]
+    return {
+        "files": file_data,
+        "total_files": len(file_data),
+    }
+
+
+class TopStructuralRiskFileSchema(Schema):
+    file_path: str
+    max_nesting_depth: int = 0
+    max_inheritance_depth: int = 0
+    structural_risk_score: int = 0
+
+class TopStructuralRiskSchema(Schema):
+    total_count: int
+    files: List[TopStructuralRiskFileSchema]
+
+@router.get("/repos/{repo_id}/top-structural-risk", response=TopStructuralRiskSchema)
+def get_top_structural_risk(request, repo_id: int, k: int = None):
+    files = list(
+        File.objects.filter(module_id__repo_id=repo_id)
+        .order_by('-structural_risk_score')
+    )
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "max_nesting_depth": f.max_nesting_depth,
+                "max_inheritance_depth": f.max_inheritance_depth,
+                "structural_risk_score": f.structural_risk_score,
+            }
+            for f in files
+        ],
     }
 
 
@@ -220,6 +279,80 @@ def get_boundary_hubs(request, repo_id: int, k: int = None):
 @router.get("/repos/{repo_id}/local-hubs", response=HubListSchema)
 def get_local_hubs(request, repo_id: int, k: int = None):
     return _get_hub_files(repo_id, 'LOCAL', k)
+
+class HighRiskGlobalHubFileSchema(Schema):
+    file_path: str
+    change_frequency_score: float
+    global_coupling: int = 0
+    loc: int = 0
+
+class HighRiskGlobalHubSchema(Schema):
+    total_count: int
+    files: List[HighRiskGlobalHubFileSchema]
+
+@router.get("/repos/{repo_id}/high-risk-global-hubs", response=HighRiskGlobalHubSchema)
+def get_high_risk_global_hubs(request, repo_id: int, k: int = None, min_churn: float = 7.0):
+    files = list(
+        File.objects.filter(
+            module_id__repo_id=repo_id,
+            hub_type='GLOBAL',
+            change_frequency_score__gt=min_churn,
+        )
+        .order_by('-change_frequency_score')
+    )
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "change_frequency_score": f.change_frequency_score,
+                "global_coupling": f.inbound_coupling,
+                "loc": f.loc_count,
+            }
+            for f in files
+        ],
+    }
+
+
+class TopChurnedFileSchema(Schema):
+    file_path: str
+    change_frequency_score: float
+    change_frequency_raw: float
+    is_hotspot: bool
+
+class TopChurnedFilesResponseSchema(Schema):
+    total_count: int
+    files: List[TopChurnedFileSchema]
+
+@router.get("/repos/{repo_id}/top-churned-files", response=TopChurnedFilesResponseSchema)
+def get_top_churned_files(request, repo_id: int, k: int = None, exclude_ext: List[str] = Query(None), exclude_tests: bool = False):
+    qs = File.objects.filter(module_id__repo_id=repo_id)
+    if exclude_tests:
+        qs = qs.exclude(file_path__regex=r'(^|/)test_[^/]*$')
+    if exclude_ext:
+        for ext in exclude_ext:
+            suffix = ext if ext.startswith('.') else f'.{ext}'
+            qs = qs.exclude(file_path__endswith=suffix)
+    files = list(qs.order_by('-change_frequency_score'))
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    hotspot_threshold = settings.RISK_CONFIG["CHURN_HOTSPOT_THRESHOLD"]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "change_frequency_score": f.change_frequency_score,
+                "change_frequency_raw": f.change_frequency_raw,
+                "is_hotspot": f.change_frequency_score >= hotspot_threshold,
+            }
+            for f in files
+        ],
+    }
 
 @router.post("/repos/{repo_id}/recalculate-structural-hubs")
 def recalculate_structural_hubs(request, repo_id: int):
