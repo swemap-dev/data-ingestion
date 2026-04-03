@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from ninja import Router, Schema, Query
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
-from git_blame_ingestion_app.models import File
+from git_blame_ingestion_app.models import Engineer, File, ModuleOwnershipMetric
 from .services.brain_file_analysis import calculate_structural_hubs
 
 router = Router()
@@ -352,6 +353,123 @@ def get_top_churned_files(request, repo_id: int, k: int = None, exclude_ext: Lis
             }
             for f in files
         ],
+    }
+
+class DominantOwnerEntrySchema(Schema):
+    module_id: int
+    module_name: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+
+class DominantOwnersSchema(Schema):
+    total_count: int
+    entries: List[DominantOwnerEntrySchema]
+
+# TODO: make it more generalized
+@router.get("/repos/{repo_id}/dominant-owners", response=DominantOwnersSchema)
+def get_dominant_owners(request, repo_id: int, k: int = None):
+    metrics = (
+        ModuleOwnershipMetric.objects
+        .filter(
+            module__repo_id=repo_id,
+            lines_owned_percentage__gt=80,
+            lines_owned_percentage__lt=100,
+            type='WROTE'
+        )
+        .select_related('module', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+    entries = [
+        {
+            "module_id": m.module_id,
+            "module_name": m.module.name or m.module.dir_path or "ROOT",
+            "engineer_id": m.engineer_id,
+            "engineer_name": m.engineer.name,
+            "lines_owned_percentage": m.lines_owned_percentage,
+        }
+        for m in metrics
+    ]
+    if k is not None:
+        entries = entries[:k]
+    return {
+        "total_count": len(entries),
+        "entries": entries,
+    }
+
+
+class EngineerLastActiveEntry(Schema):
+    engineer_id: int
+    name: str
+    last_active: Optional[datetime] = None
+
+class EngineerLastActiveRequest(Schema):
+    engineer_ids: List[int]
+
+class EngineerLastActiveResponse(Schema):
+    engineers: List[EngineerLastActiveEntry]
+
+@router.post("/engineers/last-active", response=EngineerLastActiveResponse)
+def get_engineers_last_active(request, payload: EngineerLastActiveRequest):
+    engineers = Engineer.objects.filter(id__in=payload.engineer_ids).values(
+        'id', 'name', 'last_active'
+    )
+    return {
+        "engineers": [
+            {
+                "engineer_id": e['id'],
+                "name": e['name'],
+                "last_active": e['last_active'],
+            }
+            for e in engineers
+        ],
+    }
+
+class BusFactorEntry(Schema):
+    module_id: int
+    module_name: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+    last_active: Optional[datetime] = None
+
+class BusFactorResponse(Schema):
+    total_count: int
+    entries: List[BusFactorEntry]
+
+# TODO: just for demo. Call this with k=1 will return the needed data
+@router.get("/repos/{repo_id}/bus-factor-risk", response=BusFactorResponse)
+def get_bus_factor_risk(request, repo_id: int, k: int = None):
+    metrics = (
+        ModuleOwnershipMetric.objects
+        .filter(
+            module__repo_id=repo_id,
+            lines_owned_percentage__gt=80,
+            lines_owned_percentage__lt=100,
+            type='WROTE',
+        )
+        .select_related('module', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+    entries = sorted(
+        [
+            {
+                "module_id": m.module_id,
+                "module_name": m.module.name or m.module.dir_path or "ROOT",
+                "engineer_id": m.engineer_id,
+                "engineer_name": m.engineer.name,
+                "lines_owned_percentage": m.lines_owned_percentage,
+                "last_active": m.engineer.last_active,
+            }
+            for m in metrics
+        ],
+        key=lambda e: e["last_active"] or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    if k is not None:
+        entries = entries[:k]
+    return {
+        "total_count": len(entries),
+        "entries": entries,
     }
 
 @router.post("/repos/{repo_id}/recalculate-structural-hubs")

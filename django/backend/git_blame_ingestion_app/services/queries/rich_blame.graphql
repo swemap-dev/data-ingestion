@@ -16,6 +16,7 @@ query GetRichBlame($owner: String!, $repo: String!, $ref: String!, $path: String
               commit {
                 id
                 oid
+                authoredDate
                 author {
                   name
                   email
