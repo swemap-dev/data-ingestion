@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from ninja import Router, Schema
+from ninja import Router, Schema, Query
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
-from git_blame_ingestion_app.models import File
+from git_blame_ingestion_app.models import Engineer, File, ModuleOwnershipMetric
 from .services.brain_file_analysis import calculate_structural_hubs
 
 router = Router()
@@ -56,6 +57,65 @@ def get_structural_complexity(request, module_id: int):
         "files_with_deep_nesting": deep_nesting,
         "files_with_deep_inheritance": deep_inheritance,
         "total_structural_risk_score": total_risk,
+    }
+
+
+class NestingInheritanceFileSchema(Schema):
+    file_path: str
+    max_nesting_depth: int = 0
+    max_inheritance_depth: int = 0
+
+class NestingInheritanceSchema(Schema):
+    files: List[NestingInheritanceFileSchema]
+    total_files: int
+
+@router.get("/modules/{module_id}/nesting-inheritance", response=NestingInheritanceSchema)
+def get_nesting_inheritance(request, module_id: int):
+    files = File.objects.filter(module_id_id=module_id)
+    file_data = [
+        {
+            "file_path": f.file_path,
+            "max_nesting_depth": f.max_nesting_depth,
+            "max_inheritance_depth": f.max_inheritance_depth,
+        }
+        for f in files
+    ]
+    return {
+        "files": file_data,
+        "total_files": len(file_data),
+    }
+
+
+class TopStructuralRiskFileSchema(Schema):
+    file_path: str
+    max_nesting_depth: int = 0
+    max_inheritance_depth: int = 0
+    structural_risk_score: int = 0
+
+class TopStructuralRiskSchema(Schema):
+    total_count: int
+    files: List[TopStructuralRiskFileSchema]
+
+@router.get("/repos/{repo_id}/top-structural-risk", response=TopStructuralRiskSchema)
+def get_top_structural_risk(request, repo_id: int, k: int = None):
+    files = list(
+        File.objects.filter(module_id__repo_id=repo_id)
+        .order_by('-structural_risk_score')
+    )
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "max_nesting_depth": f.max_nesting_depth,
+                "max_inheritance_depth": f.max_inheritance_depth,
+                "structural_risk_score": f.structural_risk_score,
+            }
+            for f in files
+        ],
     }
 
 
@@ -220,6 +280,197 @@ def get_boundary_hubs(request, repo_id: int, k: int = None):
 @router.get("/repos/{repo_id}/local-hubs", response=HubListSchema)
 def get_local_hubs(request, repo_id: int, k: int = None):
     return _get_hub_files(repo_id, 'LOCAL', k)
+
+class HighRiskGlobalHubFileSchema(Schema):
+    file_path: str
+    change_frequency_score: float
+    global_coupling: int = 0
+    loc: int = 0
+
+class HighRiskGlobalHubSchema(Schema):
+    total_count: int
+    files: List[HighRiskGlobalHubFileSchema]
+
+@router.get("/repos/{repo_id}/high-risk-global-hubs", response=HighRiskGlobalHubSchema)
+def get_high_risk_global_hubs(request, repo_id: int, k: int = None, min_churn: float = 7.0):
+    files = list(
+        File.objects.filter(
+            module_id__repo_id=repo_id,
+            hub_type='GLOBAL',
+            change_frequency_score__gt=min_churn,
+        )
+        .order_by('-change_frequency_score')
+    )
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "change_frequency_score": f.change_frequency_score,
+                "global_coupling": f.inbound_coupling,
+                "loc": f.loc_count,
+            }
+            for f in files
+        ],
+    }
+
+
+class TopChurnedFileSchema(Schema):
+    file_path: str
+    change_frequency_score: float
+    change_frequency_raw: float
+    is_hotspot: bool
+
+class TopChurnedFilesResponseSchema(Schema):
+    total_count: int
+    files: List[TopChurnedFileSchema]
+
+@router.get("/repos/{repo_id}/top-churned-files", response=TopChurnedFilesResponseSchema)
+def get_top_churned_files(request, repo_id: int, k: int = None, exclude_ext: List[str] = Query(None), exclude_tests: bool = False):
+    qs = File.objects.filter(module_id__repo_id=repo_id)
+    if exclude_tests:
+        qs = qs.exclude(file_path__regex=r'(^|/)test_[^/]*$')
+    if exclude_ext:
+        for ext in exclude_ext:
+            suffix = ext if ext.startswith('.') else f'.{ext}'
+            qs = qs.exclude(file_path__endswith=suffix)
+    files = list(qs.order_by('-change_frequency_score'))
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    hotspot_threshold = settings.RISK_CONFIG["CHURN_HOTSPOT_THRESHOLD"]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "change_frequency_score": f.change_frequency_score,
+                "change_frequency_raw": f.change_frequency_raw,
+                "is_hotspot": f.change_frequency_score >= hotspot_threshold,
+            }
+            for f in files
+        ],
+    }
+
+class DominantOwnerEntrySchema(Schema):
+    module_id: int
+    module_name: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+
+class DominantOwnersSchema(Schema):
+    total_count: int
+    entries: List[DominantOwnerEntrySchema]
+
+# TODO: make it more generalized
+@router.get("/repos/{repo_id}/dominant-owners", response=DominantOwnersSchema)
+def get_dominant_owners(request, repo_id: int, k: int = None):
+    metrics = (
+        ModuleOwnershipMetric.objects
+        .filter(
+            module__repo_id=repo_id,
+            lines_owned_percentage__gt=80,
+            lines_owned_percentage__lt=100,
+            type='WROTE'
+        )
+        .select_related('module', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+    entries = [
+        {
+            "module_id": m.module_id,
+            "module_name": m.module.name or m.module.dir_path or "ROOT",
+            "engineer_id": m.engineer_id,
+            "engineer_name": m.engineer.name,
+            "lines_owned_percentage": m.lines_owned_percentage,
+        }
+        for m in metrics
+    ]
+    if k is not None:
+        entries = entries[:k]
+    return {
+        "total_count": len(entries),
+        "entries": entries,
+    }
+
+
+class EngineerLastActiveEntry(Schema):
+    engineer_id: int
+    name: str
+    last_active: Optional[datetime] = None
+
+class EngineerLastActiveRequest(Schema):
+    engineer_ids: List[int]
+
+class EngineerLastActiveResponse(Schema):
+    engineers: List[EngineerLastActiveEntry]
+
+@router.post("/engineers/last-active", response=EngineerLastActiveResponse)
+def get_engineers_last_active(request, payload: EngineerLastActiveRequest):
+    engineers = Engineer.objects.filter(id__in=payload.engineer_ids).values(
+        'id', 'name', 'last_active'
+    )
+    return {
+        "engineers": [
+            {
+                "engineer_id": e['id'],
+                "name": e['name'],
+                "last_active": e['last_active'],
+            }
+            for e in engineers
+        ],
+    }
+
+class BusFactorEntry(Schema):
+    module_id: int
+    module_name: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+    last_active: Optional[datetime] = None
+
+class BusFactorResponse(Schema):
+    total_count: int
+    entries: List[BusFactorEntry]
+
+# TODO: just for demo. Call this with k=1 will return the needed data
+@router.get("/repos/{repo_id}/bus-factor-risk", response=BusFactorResponse)
+def get_bus_factor_risk(request, repo_id: int, k: int = None):
+    metrics = (
+        ModuleOwnershipMetric.objects
+        .filter(
+            module__repo_id=repo_id,
+            lines_owned_percentage__gt=80,
+            lines_owned_percentage__lt=100,
+            type='WROTE',
+        )
+        .select_related('module', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+    entries = sorted(
+        [
+            {
+                "module_id": m.module_id,
+                "module_name": m.module.name or m.module.dir_path or "ROOT",
+                "engineer_id": m.engineer_id,
+                "engineer_name": m.engineer.name,
+                "lines_owned_percentage": m.lines_owned_percentage,
+                "last_active": m.engineer.last_active,
+            }
+            for m in metrics
+        ],
+        key=lambda e: e["last_active"] or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    if k is not None:
+        entries = entries[:k]
+    return {
+        "total_count": len(entries),
+        "entries": entries,
+    }
 
 @router.post("/repos/{repo_id}/recalculate-structural-hubs")
 def recalculate_structural_hubs(request, repo_id: int):
