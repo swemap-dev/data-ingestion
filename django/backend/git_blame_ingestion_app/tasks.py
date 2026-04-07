@@ -235,6 +235,10 @@ def recalculate_affected_modules(module_ids):
         logger.info(f"Recalculating structural hubs for repo {repo.id}")
         calculate_structural_hubs(repo.id)
 
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+        logger.info(f"Recalculating composite risk for repo {repo.id}")
+        calculate_composite_risk(repo.id)
+
     logger.info(f"Recalculated metrics for {len(module_ids)} affected module(s)")
 
 @shared_task
@@ -265,6 +269,10 @@ def finalize_repo_ingestion(repo_id):
 
         logger.info(f"Calculating Change Frequency for repo {repo_id}")
         calculate_change_frequency(repo_id)
+
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+        logger.info(f"Calculating Composite Risk for repo {repo_id}")
+        calculate_composite_risk(repo_id)
 
         logger.info(f"Module metrics calculation complete for repo {repo_id}")
 

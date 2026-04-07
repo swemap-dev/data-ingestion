@@ -96,7 +96,7 @@ class RiskAnalyticsTests(SimpleTestCase):
         self.assertIn("Alice", result['abandoned_details'])
 
 from django.test import TestCase
-from git_blame_ingestion_app.models import Repo, Module, File, PullRequest, PullRequestFile
+from git_blame_ingestion_app.models import Repo, Module, File, Engineer, FileOwnershipMetric, PullRequest, PullRequestFile
 from .services.brain_file_analysis import calculate_structural_hubs
 
 class StructuralHubAnalysisTests(TestCase):
@@ -1879,4 +1879,295 @@ class ChangeFrequencyDecayTests(TestCase):
             old_file.change_frequency_score,
             "Recent changes should score higher than old changes past the sigmoid cliff",
         )
+
+
+@override_settings(RISK_CONFIG={
+    "BUS_FACTOR_THRESHOLD": 90.0,
+    "ABANDONED_CODE_THRESHOLD": 30.0,
+    "ABANDONED_INACTIVE_DAYS": 90,
+    "HEALTHY_SILO_TOP_MIN": 50.0,
+    "HEALTHY_SILO_TOP_MAX": 70.0,
+    "HEALTHY_SILO_OTHER_MIN": 10.0,
+    "HEALTHY_SILO_OTHER_MAX": 20.0,
+    "CHURN_DECAY_H": 1.0,
+    "CHURN_DECAY_L": 0.1,
+    "CHURN_DECAY_X0": 21,
+    "CHURN_DECAY_K": 0.5,
+    "CHURN_LOOKBACK_DAYS": 180,
+    "CHURN_HIGH_CAP_THRESHOLD": 2.0,
+    "CHURN_HIGH_CAP_FALLBACK": 7,
+    "CHURN_LOW_CAP_THRESHOLD": 0.1,
+    "CHURN_LOW_CAP_FALLBACK": 3,
+    "CHURN_QUIET_VARIANCE": 0.01,
+    "CHURN_QUIET_DEFAULT": 3,
+    "CHURN_HOTSPOT_THRESHOLD": 8,
+    "GLOBAL_HUB_ABS_THRESHOLD": 30,
+    "GLOBAL_HUB_REL_THRESHOLD": 0.15,
+    "BOUNDARY_HUB_EXT_MIN": 5,
+    "BOUNDARY_HUB_EXT_RATIO": 0.80,
+    "LOCAL_HUB_MIN_MODULE_SIZE": 3,
+    "LOCAL_HUB_INTERNAL_RATIO": 0.50,
+    "LOCAL_HUB_INTERNAL_DOMINANCE": 0.50,
+    "RISK_WEIGHT_CHURN": 0.30,
+    "RISK_WEIGHT_HUB": 0.40,
+    "RISK_WEIGHT_KNOWLEDGE": 0.30,
+    "KNOWLEDGE_TOXIC_THRESHOLD": 90.0,
+    "KNOWLEDGE_CONCENTRATED_THRESHOLD": 70.0,
+    "KNOWLEDGE_MODERATE_THRESHOLD": 50.0,
+    "KNOWLEDGE_DISTRIBUTED_SCORE": 1.0,
+    "KNOWLEDGE_ABANDONED_MULTIPLIER": 1.5,
+})
+class CompositeRiskTests(TestCase):
+    """Tests for the three-pillar composite risk calculation."""
+
+    def setUp(self):
+        self.repo = Repo.objects.create(name="risk-repo", owner="risk-owner", url="https://github.com/risk/repo")
+        self.module = Module.objects.create(repo=self.repo, name="core", dir_path="core")
+
+        self.active_engineer = Engineer.objects.create(
+            name="Alice", email="alice@test.com", last_active=timezone.now()
+        )
+        self.inactive_engineer = Engineer.objects.create(
+            name="Bob", email="bob@test.com",
+            last_active=timezone.now() - timedelta(days=120)
+        )
+
+    def _create_file(self, path, hub_type=None, inbound_coupling=0,
+                     external_imports=0, module_density=0.0,
+                     change_frequency_score=5.0):
+        return File.objects.create(
+            module_id_id=self.module.id,
+            file_path=path,
+            line_count=100,
+            hub_type=hub_type,
+            inbound_coupling=inbound_coupling,
+            external_imports=external_imports,
+            module_density=module_density,
+            change_frequency_score=change_frequency_score,
+        )
+
+    def _add_ownership(self, file, engineer, pct):
+        FileOwnershipMetric.objects.create(
+            file=file, engineer=engineer,
+            lines_owned=int(pct), lines_owned_percentage=pct,
+            type='WROTE',
+        )
+
+    # ── Hub score tests ──────────────────────────────────────────────
+
+    def test_global_hub_score_uses_coupling(self):
+        """Global hub score is 7-10, scaled by inbound_coupling relative to repo max."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f_max = self._create_file("core/big.py", hub_type='GLOBAL', inbound_coupling=40)
+        f_mid = self._create_file("core/mid.py", hub_type='GLOBAL', inbound_coupling=20)
+        self._add_ownership(f_max, self.active_engineer, 30.0)
+        self._add_ownership(f_mid, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f_max.refresh_from_db()
+        f_mid.refresh_from_db()
+
+        self.assertEqual(f_max.hub_score, 10.0)
+        self.assertAlmostEqual(f_mid.hub_score, 8.5, places=1)
+
+    def test_boundary_hub_score_uses_ext_imports(self):
+        """Boundary hub score is 4-7, scaled by external_imports."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/api.py", hub_type='BOUNDARY', external_imports=10)
+        # Need another file so max_ext is meaningful
+        f2 = self._create_file("core/other.py", external_imports=10)
+        self._add_ownership(f, self.active_engineer, 30.0)
+        self._add_ownership(f2, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.hub_score, 7.0)
+
+    def test_local_hub_score_uses_density(self):
+        """Local hub score is 1-4, scaled by module_density."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/util.py", hub_type='LOCAL', module_density=0.8)
+        self._add_ownership(f, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertAlmostEqual(f.hub_score, 3.4, places=1)
+
+    def test_non_hub_score_is_zero(self):
+        """Files without hub classification get hub_score=0."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/plain.py")
+        self._add_ownership(f, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.hub_score, 0.0)
+
+    # ── Knowledge score tests ────────────────────────────────────────
+
+    def test_toxic_ownership_score(self):
+        """Top owner >= 90% gets knowledge_score = 10."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/silo.py")
+        self._add_ownership(f, self.active_engineer, 95.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.knowledge_score, 10.0)
+
+    def test_concentrated_ownership_score(self):
+        """Top owner 70-89% gets knowledge_score = 7."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/semi.py")
+        self._add_ownership(f, self.active_engineer, 75.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.knowledge_score, 7.0)
+
+    def test_moderate_ownership_score(self):
+        """Top owner 50-69% gets knowledge_score = 4."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/shared.py")
+        self._add_ownership(f, self.active_engineer, 55.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.knowledge_score, 4.0)
+
+    def test_distributed_ownership_score(self):
+        """Top owner < 50% gets knowledge_score = 1."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/team.py")
+        self._add_ownership(f, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.knowledge_score, 1.0)
+
+    def test_abandoned_owner_multiplier(self):
+        """Inactive top owner gets knowledge_score multiplied by 1.5, capped at 10."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/abandoned.py")
+        self._add_ownership(f, self.inactive_engineer, 75.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        # 7.0 * 1.5 = 10.5, capped at 10.0
+        self.assertEqual(f.knowledge_score, 10.0)
+
+    def test_abandoned_moderate_owner_multiplier(self):
+        """Inactive owner with moderate ownership: 4.0 * 1.5 = 6.0."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/stale.py")
+        self._add_ownership(f, self.inactive_engineer, 55.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        self.assertEqual(f.knowledge_score, 6.0)
+
+    def test_no_ownership_data_defaults_to_zero(self):
+        """File with no FileOwnershipMetric gets knowledge_score = 1 (distributed)."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/new.py")
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        # top_pct = 0.0 -> below 50% -> distributed score = 1.0
+        self.assertEqual(f.knowledge_score, 1.0)
+
+    # ── Composite formula tests ──────────────────────────────────────
+
+    def test_composite_formula(self):
+        """risk = 0.30*churn + 0.40*hub + 0.30*knowledge with known values."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        # Global hub (max coupling), toxic ownership, high churn
+        f = self._create_file(
+            "core/danger.py",
+            hub_type='GLOBAL', inbound_coupling=50,
+            change_frequency_score=9.0,
+        )
+        self._add_ownership(f, self.active_engineer, 95.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        # hub_score = min(10, 7 + 3*50/50) = 10
+        # knowledge_score = 10 (>= 90%)
+        # risk = 0.30*9.0 + 0.40*10.0 + 0.30*10.0 = 2.7 + 4.0 + 3.0 = 9.7
+        self.assertAlmostEqual(f.risk_score, 9.7, places=1)
+
+    def test_low_risk_file(self):
+        """Non-hub, distributed ownership, low churn -> low composite score."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        f = self._create_file("core/safe.py", change_frequency_score=2.0)
+        self._add_ownership(f, self.active_engineer, 30.0)
+
+        calculate_composite_risk(self.repo.id)
+        f.refresh_from_db()
+
+        # hub=0, knowledge=1, churn=2
+        # risk = 0.30*2 + 0.40*0 + 0.30*1 = 0.6 + 0 + 0.3 = 0.9
+        self.assertAlmostEqual(f.risk_score, 0.9, places=1)
+
+    # ── Module P90 aggregation tests ─────────────────────────────────
+
+    def test_module_p90_aggregation(self):
+        """Module risk_score is set to the 90th percentile of file scores."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        # Create 10 files with varying risk profiles
+        for i in range(9):
+            f = self._create_file(f"core/low_{i}.py", change_frequency_score=2.0)
+            self._add_ownership(f, self.active_engineer, 30.0)
+        # One high-risk file
+        f_high = self._create_file(
+            "core/hot.py", hub_type='GLOBAL', inbound_coupling=30,
+            change_frequency_score=9.0,
+        )
+        self._add_ownership(f_high, self.active_engineer, 95.0)
+
+        calculate_composite_risk(self.repo.id)
+        self.module.refresh_from_db()
+
+        # P90 of 10 files: index = ceil(0.9*10)-1 = 8 (9th element in sorted list)
+        # The high-risk file should be at the top, so P90 picks it
+        self.assertIsNotNone(self.module.risk_score)
+        self.assertGreater(self.module.risk_score, 5.0)
+
+    def test_empty_module_gets_null_risk(self):
+        """Module with no files gets risk_score = None."""
+        from risk_dashboard.services.composite_risk import calculate_composite_risk
+
+        empty_module = Module.objects.create(
+            repo=self.repo, name="empty", dir_path="empty"
+        )
+
+        calculate_composite_risk(self.repo.id)
+        empty_module.refresh_from_db()
+
+        self.assertIsNone(empty_module.risk_score)
 
