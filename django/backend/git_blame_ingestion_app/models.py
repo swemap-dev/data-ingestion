@@ -129,6 +129,11 @@ class File(models.Model):
     change_frequency_score = models.FloatField(default=0.0)
     change_frequency_raw = models.FloatField(default=0.0)
 
+    # Composite Risk Score (three-pillar)
+    hub_score = models.FloatField(default=0.0)          # 0-10, coupling-weighted
+    knowledge_score = models.FloatField(default=0.0)    # 0-10, ownership concentration
+    risk_score = models.FloatField(default=0.0)         # 0-10, weighted composite
+
     class Meta:
         db_table = 'files'
         managed = True

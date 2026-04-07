@@ -4,7 +4,7 @@ import pprint
 from dotenv import load_dotenv
 
 # Load .env file if present
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend', '.env'))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 
 # Setup Django environment manually to avoid loading all apps/dependencies

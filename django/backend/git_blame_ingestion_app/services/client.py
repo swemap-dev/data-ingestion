@@ -10,7 +10,7 @@ if __name__ == "__main__":
     # Allow running directly for testing
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'backend', '.env'))
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
     from git_blame_ingestion_app.services.repository import RepositoryMetadata
 
     class _FakeSettings:

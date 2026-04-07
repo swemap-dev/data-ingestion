@@ -4,7 +4,10 @@ from ninja import Router, Schema, Query
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
-from git_blame_ingestion_app.models import Engineer, File, ModuleOwnershipMetric
+from git_blame_ingestion_app.models import (
+    Engineer, File, FileOwnershipMetric, InteractionType,
+    ModuleOwnershipMetric, PullRequestFile,
+)
 from .services.brain_file_analysis import calculate_structural_hubs
 
 router = Router()
@@ -164,6 +167,7 @@ def get_change_frequency(request, module_id: int):
 class ChildRiskSchema(Schema):
     module_id: int
     module_name: str
+    risk_score: Optional[float] = None
     global_hub_count: int = 0
     boundary_hub_count: int = 0
     local_hub_count: int = 0
@@ -184,6 +188,7 @@ def _get_module_risk(module) -> dict:
     return {
         "module_id": module.id,
         "module_name": module.name or "ROOT",
+        "risk_score": module.risk_score,
         "global_hub_count": sum(1 for f in files if f.hub_type == 'GLOBAL'),
         "boundary_hub_count": sum(1 for f in files if f.hub_type == 'BOUNDARY'),
         "local_hub_count": sum(1 for f in files if f.hub_type == 'LOCAL'),
@@ -476,3 +481,187 @@ def get_bus_factor_risk(request, repo_id: int, k: int = None):
 def recalculate_structural_hubs(request, repo_id: int):
     calculate_structural_hubs(repo_id)
     return {"status": "ok"}
+
+
+# ── Composite Risk Endpoints ────────────────────────────────────────────
+
+class FileRiskSchema(Schema):
+    file_path: str
+    risk_score: float
+    churn_score: float
+    hub_score: float
+    knowledge_score: float
+    hub_type: Optional[str] = None
+
+class RiskRankingSchema(Schema):
+    total_count: int
+    files: List[FileRiskSchema]
+
+@router.get("/repos/{repo_id}/risk-ranking", response=RiskRankingSchema)
+def get_risk_ranking(request, repo_id: int, k: int = None):
+    files = list(
+        File.objects.filter(module_id__repo_id=repo_id)
+        .order_by('-risk_score')
+    )
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "risk_score": f.risk_score,
+                "churn_score": f.change_frequency_score,
+                "hub_score": f.hub_score,
+                "knowledge_score": f.knowledge_score,
+                "hub_type": f.hub_type,
+            }
+            for f in files
+        ],
+    }
+
+@router.get("/modules/{module_id}/risk-scores", response=RiskRankingSchema)
+def get_module_risk_scores(request, module_id: int):
+    files = list(
+        File.objects.filter(module_id_id=module_id)
+        .order_by('-risk_score')
+    )
+    return {
+        "total_count": len(files),
+        "files": [
+            {
+                "file_path": f.file_path,
+                "risk_score": f.risk_score,
+                "churn_score": f.change_frequency_score,
+                "hub_score": f.hub_score,
+                "knowledge_score": f.knowledge_score,
+                "hub_type": f.hub_type,
+            }
+            for f in files
+        ],
+    }
+
+class ModuleRiskSchema(Schema):
+    module_id: int
+    module_name: str
+    risk_score: Optional[float] = None
+    file_count: int
+    high_risk_file_count: int
+
+class ModuleRiskRankingSchema(Schema):
+    total_count: int
+    modules: List[ModuleRiskSchema]
+
+@router.get("/repos/{repo_id}/module-risk-ranking", response=ModuleRiskRankingSchema)
+def get_module_risk_ranking(request, repo_id: int, k: int = None):
+    from git_blame_ingestion_app.models import Module
+    modules = list(
+        Module.objects.filter(repo_id=repo_id)
+        .order_by('-risk_score')
+    )
+    total_count = len(modules)
+    if k is not None:
+        modules = modules[:k]
+    return {
+        "total_count": total_count,
+        "modules": [
+            {
+                "module_id": m.id,
+                "module_name": m.name or "ROOT",
+                "risk_score": m.risk_score,
+                "file_count": File.objects.filter(module_id_id=m.id).count(),
+                "high_risk_file_count": File.objects.filter(
+                    module_id_id=m.id, risk_score__gte=7
+                ).count(),
+            }
+            for m in modules
+        ],
+    }
+
+@router.post("/repos/{repo_id}/recalculate-risk")
+def recalculate_risk(request, repo_id: int):
+    from .services.composite_risk import calculate_composite_risk
+    calculate_composite_risk(repo_id)
+    return {"status": "ok"}
+
+
+# ── Risk Score Breakdown (per-file pillar details) ──────────────────────
+
+class OwnershipEntrySchema(Schema):
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+
+class HubBreakdownSchema(Schema):
+    hub_type: Optional[str] = None
+    hub_score: float
+    inbound_coupling: int
+    external_imports: int
+
+class KnowledgeBreakdownSchema(Schema):
+    knowledge_score: float
+    owners: List[OwnershipEntrySchema]
+
+class ChurnBreakdownSchema(Schema):
+    churn_score: float
+    last_change_at: Optional[datetime] = None
+
+class RiskBreakdownSchema(Schema):
+    file_path: str
+    risk_score: float
+    hub: HubBreakdownSchema
+    knowledge: KnowledgeBreakdownSchema
+    churn: ChurnBreakdownSchema
+
+@router.get("/files/{file_id}/risk-breakdown", response=RiskBreakdownSchema)
+def get_risk_breakdown(request, file_id: int):
+    f = File.objects.get(id=file_id)
+
+    # Hub pillar
+    hub = {
+        "hub_type": f.hub_type,
+        "hub_score": f.hub_score,
+        "inbound_coupling": f.inbound_coupling,
+        "external_imports": f.external_imports,
+    }
+
+    # Knowledge pillar — top writers for this file
+    owners = list(
+        FileOwnershipMetric.objects
+        .filter(file_id=f.id, type=InteractionType.WROTE)
+        .select_related('engineer')
+        .order_by('-lines_owned_percentage')
+    )
+    knowledge = {
+        "knowledge_score": f.knowledge_score,
+        "owners": [
+            {
+                "engineer_id": o.engineer_id,
+                "engineer_name": o.engineer.name,
+                "lines_owned_percentage": o.lines_owned_percentage or 0.0,
+            }
+            for o in owners
+        ],
+    }
+
+    # Churn pillar — latest PR that touched this file
+    latest_pr_file = (
+        PullRequestFile.objects
+        .filter(file_path=f.file_path, pull_request__repo=f.module_id.repo)
+        .select_related('pull_request')
+        .order_by('-pull_request__merged_at')
+        .first()
+    )
+    churn = {
+        "churn_score": f.change_frequency_score,
+        "last_change_at": latest_pr_file.pull_request.merged_at if latest_pr_file else None,
+    }
+
+    return {
+        "file_path": f.file_path,
+        "risk_score": f.risk_score,
+        "hub": hub,
+        "knowledge": knowledge,
+        "churn": churn,
+    }
