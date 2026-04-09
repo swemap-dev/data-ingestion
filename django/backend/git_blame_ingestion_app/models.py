@@ -22,6 +22,11 @@ class DependencyType(models.TextChoices):
     INTERNAL = 'INTERNAL', _('Internal')
     EXTERNAL = 'EXTERNAL', _('External')
 
+class HubType(models.TextChoices):
+    GLOBAL = 'GLOBAL', _('Global Hub')
+    BOUNDARY = 'BOUNDARY', _('Boundary Hub')
+    LOCAL = 'LOCAL', _('Local Hub')
+
 # 2. Independent Models
 
 class Engineer(models.Model):
@@ -75,6 +80,7 @@ class Skill(models.Model):
 
 class Module(models.Model):
     repo = models.ForeignKey(Repo, on_delete=models.CASCADE, related_name='modules')
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     name = models.CharField(max_length=255, null=True, blank=True)
     dir_path = models.CharField(max_length=512, null=True, blank=True)
     description = models.TextField(null=True, blank=True)
@@ -101,11 +107,18 @@ class File(models.Model):
     line_count = models.IntegerField(null=True, blank=True)
     ast_summary = models.JSONField(null=True, blank=True)
     
-    # Brain File Metrics
-    inbound_coupling = models.IntegerField(default=0)
+    # Structural Hub Metrics
+    inbound_coupling = models.IntegerField(default=0)    # N_F: total unique importers repo-wide
+    internal_imports = models.IntegerField(default=0)    # I_F: importers from same module
+    external_imports = models.IntegerField(default=0)    # E_F: importers from other modules
     module_density = models.FloatField(default=0.0)
     loc_count = models.IntegerField(default=0)
-    is_brain_file = models.BooleanField(default=False)
+    hub_type = models.CharField(
+        max_length=20,
+        choices=HubType.choices,
+        null=True,
+        blank=True,
+    )
 
     # Structural Complexity Metrics
     max_nesting_depth = models.IntegerField(default=0)
@@ -115,6 +128,11 @@ class File(models.Model):
     # Change Frequency (File Churn) Metrics
     change_frequency_score = models.FloatField(default=0.0)
     change_frequency_raw = models.FloatField(default=0.0)
+
+    # Composite Risk Score (three-pillar)
+    hub_score = models.FloatField(default=0.0)          # 0-10, coupling-weighted
+    knowledge_score = models.FloatField(default=0.0)    # 0-10, ownership concentration
+    risk_score = models.FloatField(default=0.0)         # 0-10, weighted composite
 
     class Meta:
         db_table = 'files'

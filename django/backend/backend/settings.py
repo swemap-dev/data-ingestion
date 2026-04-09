@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'risk_dashboard',
     'ninja',
     "corsheaders",
+    'performance_profiling',
 ]
 
 MIDDLEWARE = [
@@ -100,11 +101,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.getenv('DB_NAME', 'postgres'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', '0812'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
 
@@ -167,4 +168,22 @@ RISK_CONFIG = {
     "CHURN_QUIET_VARIANCE": 0.01,
     "CHURN_QUIET_DEFAULT": 3,
     "CHURN_HOTSPOT_THRESHOLD": 8,
+    # Structural Hub Thresholds
+    "GLOBAL_HUB_ABS_THRESHOLD": 30,       # N_F >= 30 incoming dependencies
+    "GLOBAL_HUB_REL_THRESHOLD": 0.15,     # N_F >= 15% of all repo files
+    "BOUNDARY_HUB_EXT_MIN": 5,            # E_F >= 5 external importers
+    "BOUNDARY_HUB_EXT_RATIO": 0.80,       # E_F / (I_F + E_F) >= 80%
+    "LOCAL_HUB_MIN_MODULE_SIZE": 3,        # S_M >= 3 sibling files
+    "LOCAL_HUB_INTERNAL_RATIO": 0.50,      # I_F / S_M >= 50%
+    "LOCAL_HUB_INTERNAL_DOMINANCE": 0.50,  # I_F / (I_F + E_F) >= 50%
+    # Composite Risk Weights
+    "RISK_WEIGHT_CHURN": 0.30,
+    "RISK_WEIGHT_HUB": 0.40,
+    "RISK_WEIGHT_KNOWLEDGE": 0.30,
+    # Knowledge Score Thresholds
+    "KNOWLEDGE_TOXIC_THRESHOLD": 90.0,
+    "KNOWLEDGE_CONCENTRATED_THRESHOLD": 70.0,
+    "KNOWLEDGE_MODERATE_THRESHOLD": 50.0,
+    "KNOWLEDGE_DISTRIBUTED_SCORE": 1.0,
+    "KNOWLEDGE_ABANDONED_MULTIPLIER": 1.5,
 }

@@ -44,7 +44,9 @@ def ingest_merged_prs(repo_id, owner, name, lookback_days=None):
         )
 
         if created:
-            file_paths = client.get_pull_request_files(owner, name, pr_data['number'])
+            file_paths = pr_data.get('_file_paths', [])
+            if pr_data.get('_files_truncated', False):
+                logger.warning(f"PR #{pr_data['number']} has >100 files; inline list is truncated")
             pr_files = [
                 PullRequestFile(pull_request=pr_obj, file_path=fp[:512])
                 for fp in file_paths
@@ -53,3 +55,4 @@ def ingest_merged_prs(repo_id, owner, name, lookback_days=None):
             logger.info(f"PR #{pr_data['number']}: ingested {len(pr_files)} files")
 
     logger.info(f"PR ingestion complete for {owner}/{name}: {len(merged_pulls)} PRs processed")
+

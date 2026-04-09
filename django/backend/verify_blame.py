@@ -4,7 +4,7 @@ import pprint
 from dotenv import load_dotenv
 
 # Load .env file if present
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 
 # Setup Django environment manually to avoid loading all apps/dependencies
@@ -18,7 +18,7 @@ sys.path.append(current_dir)
 
 try:
     from git_blame_ingestion_app.services.client import GitHubClient
-    from git_blame_ingestion_app.services.file_contents import FileContentsService
+    from git_blame_ingestion_app.services.file_contents_gql import FileContentsServiceGQL as FileContentsService
 except ImportError as e:
     print(f"Import Error: {e}")
     print("Ensure you are running this script from the correct directory or python path.")

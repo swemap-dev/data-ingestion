@@ -1,0 +1,1 @@
+- [Risk Dashboard Context Brief](project_risk_dashboard_brief.md) — Three risk components (knowledge, complexity, churn) + structural hubs, scoring logic, models, and pipeline

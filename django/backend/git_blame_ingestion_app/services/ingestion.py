@@ -1,4 +1,6 @@
 import logging
+from collections import defaultdict
+from datetime import datetime
 from urllib.parse import urlparse
 from django.db import transaction
 from django.db.models import Sum, F, Func, Value, FloatField, IntegerField, ExpressionWrapper
@@ -6,7 +8,7 @@ from django.db.models.functions import Coalesce
 from psycopg.types.range import Range as NumericRange
 
 from ..models import (
-    File, Engineer, LineOwnership, FileOwnershipMetric, 
+    File, Engineer, LineOwnership, FileOwnershipMetric,
     Repo, Module, InteractionType, ModuleOwnershipMetric
 )
 
@@ -58,9 +60,11 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_
         LineOwnership.objects.filter(file_id=file_id).delete()
         
         total_lines = 0
-        
+
         # Bulk create list
         line_ownerships = []
+        # Track max authored date per engineer for last_active
+        engineer_latest_commit = defaultdict(lambda: None)
 
         for entry in blame_ranges:
             # Extract Engineer Info
@@ -70,6 +74,14 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_
             
             engineer_obj = get_or_create_engineer(author_name, email)
             engineer_id = engineer_obj.id
+
+            # Track latest authored date per engineer
+            authored_date_str = entry.get('commit', {}).get('authoredDate')
+            if authored_date_str:
+                authored_date = datetime.fromisoformat(authored_date_str.replace('Z', '+00:00'))
+                prev = engineer_latest_commit[engineer_id]
+                if prev is None or authored_date > prev:
+                    engineer_latest_commit[engineer_id] = authored_date
 
             # Extract Reviewer Info
             reviewers = entry.get('commit', {}).get('reviewers', [])
@@ -121,7 +133,10 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_
 
         # 5. Aggregation Pipeline
         recalculate_metrics(file_id, total_lines)
-        
+
+        # 6. Update Engineer.last_active
+        update_engineer_last_active(engineer_latest_commit)
+
         logger.info(f"Successfully processed blame for {file_path}: file_id {file_id}")
 
     except Exception as e:
@@ -129,14 +144,39 @@ def process_blame_response(module_id: int, json_data: dict, file_path: str, ast_
         # Transaction will be rolled back by @transaction.atomic
 
 def get_or_create_engineer(name: str, email: str) -> Engineer:
-    """Upserts engineer and returns object"""
-    # Check by email first (unique constraint)
-    # Using update_or_create in case name changed, though email is primary identifier
-    engineer, created = Engineer.objects.update_or_create(
-        email=email,
-        defaults={'name': name}
-    )
-    return engineer
+    """Gets or creates an engineer by email. Safe for concurrent Celery workers."""
+    from django.db import IntegrityError, OperationalError
+    import time
+
+    for attempt in range(3):
+        try:
+            engineer, created = Engineer.objects.get_or_create(
+                email=email,
+                defaults={'name': name}
+            )
+            return engineer
+        except (IntegrityError, OperationalError) as e:
+            if attempt < 2:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            # Last resort: just try a plain get
+            try:
+                return Engineer.objects.get(email=email)
+            except Engineer.DoesNotExist:
+                raise e
+
+def update_engineer_last_active(engineer_latest_commit: dict):
+    """
+    Updates Engineer.last_active only if the new authored date is more recent.
+    """
+    for engineer_id, authored_date in engineer_latest_commit.items():
+        if authored_date is None:
+            continue
+        Engineer.objects.filter(
+            id=engineer_id,
+        ).exclude(
+            last_active__gte=authored_date,
+        ).update(last_active=authored_date)
 
 def recalculate_metrics(file_id: int, total_lines: int):
     """
