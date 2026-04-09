@@ -49,38 +49,20 @@ def calculate_change_frequency(repo_id):
 
     all_raws = [f.change_frequency_raw for f in files]
 
-    # Step 4: Quiet repo check
-    if len(all_raws) <= 1:
-        variance = 0.0
-    else:
-        mean_raw = sum(all_raws) / len(all_raws)
-        variance = sum((x - mean_raw) ** 2 for x in all_raws) / len(all_raws)
-
-    if variance < cfg["CHURN_QUIET_VARIANCE"]:
-        for f in files:
-            f.change_frequency_score = cfg["CHURN_QUIET_DEFAULT"]
-        File.objects.bulk_update(files, ['change_frequency_score', 'change_frequency_raw'])
-        logger.info(f"Quiet repo {repo_id}: all files set to default score {cfg['CHURN_QUIET_DEFAULT']}")
-        return
-
-    # Step 5: Percentile ranking
-    sorted_raws = sorted(all_raws)
-    n = len(sorted_raws)
-
-    def percentile_rank(value):
-        # Count how many values are strictly less than this value
-        count_below = sum(1 for v in sorted_raws if v < value)
-        return count_below / (n - 1) if n > 1 else 0.0
-
-    # Step 6: Capped normalization
-    max_raw = max(all_raws)
-    min_raw = min(all_raws)
-    effective_max = 10 if max_raw >= cfg["CHURN_HIGH_CAP_THRESHOLD"] else cfg["CHURN_HIGH_CAP_FALLBACK"]
-    effective_min = 1 if min_raw <= cfg["CHURN_LOW_CAP_THRESHOLD"] else cfg["CHURN_LOW_CAP_FALLBACK"]
-
+    # Step 4: Logarithmic scoring
+    # Maps absolute raw score to a 1-10 scale logarithmically, independently of other files
+    # We use CHURN_HIGH_CAP_THRESHOLD to determine what raw score maps to a 10.
+    high_cap = cfg.get("CHURN_HIGH_CAP_THRESHOLD", 2.0)
+    
     for f in files:
-        pct = percentile_rank(f.change_frequency_raw)
-        f.change_frequency_score = round(effective_min + pct * (effective_max - effective_min), 2)
+        raw = f.change_frequency_raw
+        if raw <= 0:
+            score = 1.0
+        else:
+            ratio = math.log(raw + 1) / math.log(high_cap + 1)
+            score = 1.0 + 9.0 * ratio
+        
+        f.change_frequency_score = round(max(1.0, min(10.0, score)), 2)
 
     # Step 7: Bulk update
     File.objects.bulk_update(files, ['change_frequency_score', 'change_frequency_raw'])

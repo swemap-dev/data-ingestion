@@ -1342,67 +1342,6 @@ class ChangeFrequencyLookbackTests(TestCase):
         self.assertGreaterEqual(f.change_frequency_raw, 0.0)
 
 
-@override_settings(RISK_CONFIG=CHANGE_FREQ_RISK_CONFIG)
-class ChangeFrequencyQuietRepoTests(TestCase):
-    """Tests for quiet repo detection (low variance)."""
-
-    def setUp(self):
-        self.repo = Repo.objects.create(name="q-repo", owner="q-owner", url="https://github.com/q/repo")
-        self.module = Module.objects.create(repo=self.repo, name="src", dir_path="src")
-
-    def _create_file(self, path):
-        return File.objects.create(module_id_id=self.module.id, file_path=path, line_count=100)
-
-    def _create_pr(self, number, merged_days_ago, file_paths=None):
-        pr = PullRequest.objects.create(
-            repo=self.repo,
-            github_pr_number=number,
-            title=f"PR #{number}",
-            merged_at=timezone.now() - timedelta(days=merged_days_ago),
-        )
-        for fp in (file_paths or []):
-            PullRequestFile.objects.create(pull_request=pr, file_path=fp)
-        return pr
-
-    def test_no_prs_quiet_repo(self):
-        """No PRs means all raw=0, variance=0 → quiet default."""
-        f1 = self._create_file("src/a.py")
-        f2 = self._create_file("src/b.py")
-        calculate_change_frequency(self.repo.id)
-        f1.refresh_from_db()
-        f2.refresh_from_db()
-        self.assertEqual(f1.change_frequency_score, 3)  # CHURN_QUIET_DEFAULT
-        self.assertEqual(f2.change_frequency_score, 3)
-
-    def test_all_files_changed_equally_quiet(self):
-        """All files changed in the same PR → all raw scores equal → variance=0."""
-        files = [self._create_file(f"src/f{i}.py") for i in range(5)]
-        self._create_pr(1, merged_days_ago=5, file_paths=[f"src/f{i}.py" for i in range(5)])
-        calculate_change_frequency(self.repo.id)
-        for f in files:
-            f.refresh_from_db()
-            self.assertEqual(f.change_frequency_score, 3)
-
-    def test_single_file_quiet(self):
-        """Single file → variance=0 → quiet default."""
-        f = self._create_file("src/only.py")
-        self._create_pr(1, merged_days_ago=1, file_paths=["src/only.py"])
-        calculate_change_frequency(self.repo.id)
-        f.refresh_from_db()
-        self.assertEqual(f.change_frequency_score, 3)
-
-    def test_high_variance_not_quiet(self):
-        """One file changed many times, others not → high variance → not quiet."""
-        hot = self._create_file("src/hot.py")
-        cold = self._create_file("src/cold.py")
-        for i in range(10):
-            self._create_pr(i + 1, merged_days_ago=i + 1, file_paths=["src/hot.py"])
-        calculate_change_frequency(self.repo.id)
-        hot.refresh_from_db()
-        cold.refresh_from_db()
-        # Scores should differ — not quiet default
-        self.assertNotEqual(hot.change_frequency_score, cold.change_frequency_score)
-
 
 @override_settings(RISK_CONFIG=CHANGE_FREQ_RISK_CONFIG)
 class ChangeFrequencyPercentileTests(TestCase):
@@ -1435,7 +1374,7 @@ class ChangeFrequencyPercentileTests(TestCase):
         calculate_change_frequency(self.repo.id)
         hot.refresh_from_db()
         cold.refresh_from_db()
-        # hot has max raw (>2.0 → effective_max=10), cold has 0 → effective_min=1
+        # hot has max raw (>2.0 → capped at 10), cold has 0 → capped at 1.0
         self.assertEqual(hot.change_frequency_score, 10.0)
         self.assertEqual(cold.change_frequency_score, 1.0)
 
@@ -1502,7 +1441,7 @@ class ChangeFrequencyCappingTests(TestCase):
         return pr
 
     def test_high_cap_triggered(self):
-        """max_raw >= 2.0 → effective_max = 10, highest file scores 10."""
+        """max_raw >= 2.0 → 10, highest file scores 10."""
         hot = self._create_file("src/hot.py")
         cold = self._create_file("src/cold.py")
         # 5 recent PRs gives raw > 2.0
@@ -1512,19 +1451,8 @@ class ChangeFrequencyCappingTests(TestCase):
         hot.refresh_from_db()
         self.assertEqual(hot.change_frequency_score, 10.0)
 
-    def test_high_cap_fallback(self):
-        """max_raw < 2.0 → effective_max = 7."""
-        hot = self._create_file("src/hot.py")
-        cold = self._create_file("src/cold.py")
-        # One recent PR gives raw ~1.0, which is > CHURN_QUIET_VARIANCE but < 2.0
-        self._create_pr(1, merged_days_ago=1, file_paths=["src/hot.py"])
-        calculate_change_frequency(self.repo.id)
-        hot.refresh_from_db()
-        self.assertLess(hot.change_frequency_raw, 2.0)
-        self.assertEqual(hot.change_frequency_score, 7.0)
-
     def test_low_cap_triggered(self):
-        """min_raw <= 0.1 (i.e. 0.0 for untouched files) → effective_min = 1."""
+        """min_raw <= 0 (i.e. 0.0 for untouched files) → 1."""
         hot = self._create_file("src/hot.py")
         cold = self._create_file("src/cold.py")
         for i in range(5):
@@ -1533,18 +1461,6 @@ class ChangeFrequencyCappingTests(TestCase):
         cold.refresh_from_db()
         self.assertEqual(cold.change_frequency_score, 1.0)
 
-    def test_low_cap_fallback(self):
-        """All files have raw > 0.1 → effective_min = 3."""
-        f1 = self._create_file("src/a.py")
-        f2 = self._create_file("src/b.py")
-        # Both files changed, one more than the other
-        for i in range(5):
-            self._create_pr(i + 1, merged_days_ago=i + 1, file_paths=["src/a.py"])
-        self._create_pr(6, merged_days_ago=1, file_paths=["src/b.py"])
-        calculate_change_frequency(self.repo.id)
-        f2.refresh_from_db()
-        # f2 has lowest raw but > 0.1, so effective_min = 3
-        self.assertEqual(f2.change_frequency_score, 3.0)
 
 
 @override_settings(RISK_CONFIG=CHANGE_FREQ_RISK_CONFIG)
@@ -1591,12 +1507,12 @@ class ChangeFrequencyStressTests(TestCase):
             self.assertLessEqual(s, 10.0)
 
     def test_100_files_no_prs(self):
-        """100 files, 0 PRs — all quiet default."""
+        """100 files, 0 PRs — all log 0 default."""
         files = [self._create_file(f"src/f{i}.py") for i in range(100)]
         calculate_change_frequency(self.repo.id)
         for f in files:
             f.refresh_from_db()
-            self.assertEqual(f.change_frequency_score, 3)  # quiet default
+            self.assertEqual(f.change_frequency_score, 1.0)
 
     def test_one_hotspot_many_cold(self):
         """One file changed in 20 PRs, 19 others never changed. Hotspot should score 10."""
@@ -1612,7 +1528,7 @@ class ChangeFrequencyStressTests(TestCase):
             self.assertEqual(c.change_frequency_score, 1.0)
 
     def test_all_files_in_every_pr(self):
-        """Every file touched in every PR — all equal raw scores → quiet repo."""
+        """Every file touched in every PR — all equal raw scores → scale properly."""
         files = [self._create_file(f"src/f{i}.py") for i in range(10)]
         all_paths = [f"src/f{i}.py" for i in range(10)]
         for pr_num in range(1, 6):
@@ -1620,7 +1536,7 @@ class ChangeFrequencyStressTests(TestCase):
         calculate_change_frequency(self.repo.id)
         for f in files:
             f.refresh_from_db()
-            self.assertEqual(f.change_frequency_score, 3)
+            self.assertEqual(f.change_frequency_score, 10.0)
 
     def test_gradual_decay_ordering(self):
         """Files changed at different times — ordering should match recency."""
