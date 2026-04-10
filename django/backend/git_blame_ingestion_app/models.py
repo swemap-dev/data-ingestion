@@ -27,6 +27,11 @@ class HubType(models.TextChoices):
     BOUNDARY = 'BOUNDARY', _('Boundary Hub')
     LOCAL = 'LOCAL', _('Local Hub')
 
+class ActionItemStatus(models.TextChoices):
+    TODO = 'TODO', _('To Do')
+    IN_PROGRESS = 'IN_PROGRESS', _('In Progress')
+    RESOLVED = 'RESOLVED', _('Resolved')
+
 # 2. Independent Models
 
 class Engineer(models.Model):
@@ -140,6 +145,25 @@ class File(models.Model):
 
     def __str__(self):
         return self.file_path
+
+
+class ActionItem(models.Model):
+    repo = models.ForeignKey(Repo, on_delete=models.CASCADE, related_name='action_items')
+    content = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=ActionItemStatus.choices,
+        default=ActionItemStatus.TODO,
+    )
+    created_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'action_items'
+        managed = True
+
+    def __str__(self):
+        return f"ActionItem #{self.id} [{self.status}]"
 
 class Review(models.Model):
     engineer = models.ForeignKey(Engineer, on_delete=models.SET_NULL, null=True, related_name='reviews')
