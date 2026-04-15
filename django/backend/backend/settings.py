@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'ninja',
     "corsheaders",
     'performance_profiling',
+    'skill_analysis',
 ]
 
 MIDDLEWARE = [
@@ -145,6 +146,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# CSO Graph Configuration
+CSO_CSV_PATH = BASE_DIR.parent.parent / 'data' / 'CSO.3.4.1.csv'
+CSO_GRAPH_ARTIFACT_PATH = BASE_DIR / 'skill_analysis' / 'artifacts' / 'cso_graph.pickle'
 
 # Risk Dashboard Configuration
 RISK_CONFIG = {

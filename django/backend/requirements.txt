@@ -8,3 +8,4 @@ requests
 django-ninja-jwt
 django-cors-headers
 openai
+networkx
