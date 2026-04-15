@@ -1,14 +1,16 @@
 from datetime import datetime, timezone
+from django.utils import timezone as django_timezone
 from typing import List, Dict, Any, Optional
 from ninja import Router, Schema, Query
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
 from git_blame_ingestion_app.models import (
-    Engineer, File, FileOwnershipMetric, InteractionType,
+    ActionItem, Engineer, File, FileOwnershipMetric, InteractionType, Module,
     ModuleOwnershipMetric, PullRequestFile,
 )
 from .services.brain_file_analysis import calculate_structural_hubs
+from .services.llm_action_items import generate_action_items
 
 router = Router()
 
@@ -317,6 +319,47 @@ def get_high_risk_global_hubs(request, repo_id: int, k: int = None, min_churn: f
                 "change_frequency_score": f.change_frequency_score,
                 "global_coupling": f.inbound_coupling,
                 "loc": f.loc_count,
+            }
+            for f in files
+        ],
+    }
+
+
+class CascadeRiskFileSchema(Schema):
+    file_path: str
+    hub_type: str
+    inbound_coupling: int
+    change_frequency_score: float
+    cascade_score: float
+
+class CascadeRiskSchema(Schema):
+    total_count: int
+    files: List[CascadeRiskFileSchema]
+
+@router.get("/repos/{repo_id}/cascade-risk-hubs", response=CascadeRiskSchema)
+def get_cascade_risk_hubs(request, repo_id: int, k: int = None, min_churn: float = 8.0):
+    files = list(
+        File.objects.filter(
+            module_id__repo_id=repo_id,
+            hub_type__in=['GLOBAL', 'BOUNDARY'],
+            change_frequency_score__gte=min_churn,
+        )
+    )
+    for f in files:
+        f._cascade_score = f.inbound_coupling * f.change_frequency_score
+    files.sort(key=lambda f: f._cascade_score, reverse=True)
+    total_count = len(files)
+    if k is not None:
+        files = files[:k]
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": f.file_path,
+                "hub_type": f.hub_type,
+                "inbound_coupling": f.inbound_coupling,
+                "change_frequency_score": f.change_frequency_score,
+                "cascade_score": round(f._cascade_score, 2),
             }
             for f in files
         ],
@@ -664,4 +707,158 @@ def get_risk_breakdown(request, file_id: int):
         "hub": hub,
         "knowledge": knowledge,
         "churn": churn,
+    }
+
+
+# ── Under-Reviewed High-Risk Modules ──────────────────────────────────
+
+class UnderReviewedModuleSchema(Schema):
+    module_id: int
+    module_name: str
+    risk_score: float
+    wrote_lines: int
+    reviewed_lines: int
+    review_coverage: float
+
+class UnderReviewedModulesResponseSchema(Schema):
+    total_count: int
+    modules: List[UnderReviewedModuleSchema]
+
+@router.get("/repos/{repo_id}/under-reviewed-modules", response=UnderReviewedModulesResponseSchema)
+def get_under_reviewed_modules(
+    request,
+    repo_id: int,
+    k: int = None,
+    min_risk: float = 7.0,
+    max_review_coverage: float = 0.3,
+):
+    from django.db.models import Sum, Q
+
+    modules = (
+        Module.objects.filter(repo_id=repo_id, risk_score__gte=min_risk)
+    )
+
+    results = []
+    for mod in modules:
+        aggregates = FileOwnershipMetric.objects.filter(
+            file__module_id=mod,
+        ).aggregate(
+            wrote=Sum('lines_owned', filter=Q(type=InteractionType.WROTE)),
+            reviewed=Sum('lines_owned', filter=Q(type=InteractionType.REVIEWED)),
+        )
+        wrote = aggregates['wrote'] or 0
+        reviewed = aggregates['reviewed'] or 0
+        coverage = reviewed / wrote if wrote > 0 else 0.0
+
+        if coverage < max_review_coverage:
+            results.append({
+                "module_id": mod.id,
+                "module_name": mod.name or mod.dir_path or "ROOT",
+                "risk_score": mod.risk_score,
+                "wrote_lines": wrote,
+                "reviewed_lines": reviewed,
+                "review_coverage": round(coverage, 4),
+            })
+
+    results.sort(key=lambda m: m["review_coverage"])
+    total_count = len(results)
+    if k is not None:
+        results = results[:k]
+
+    return {
+        "total_count": total_count,
+        "modules": results,
+    }
+
+
+# ── LLM Action Item Generation ────────────────────────────────────────
+
+class ActionItemResponseSchema(Schema):
+    status: str
+    model: Optional[str] = None
+    message: Optional[str] = None
+    action_item_id: Optional[int] = None
+    action_items_raw: Optional[str] = None
+    context_sent: str = ""
+
+@router.post("/repos/{repo_id}/generate-action-items", response=ActionItemResponseSchema)
+def post_generate_action_items(
+    request,
+    repo_id: int,
+    top_k: int = 15,
+    context_types: List[str] = Query(None),
+    context: Optional[str] = None
+):
+    return generate_action_items(repo_id, context_types=context_types, context=context, top_k=top_k)
+
+
+# ── Fetch Action Items ────────────────────────────────────────────────
+
+class ActionItemSchema(Schema):
+    id: int
+    content: str
+    status: str
+    created_time: datetime
+    end_time: Optional[datetime] = None
+
+@router.get("/repos/{repo_id}/action-items/{action_item_id}", response=ActionItemSchema)
+def get_action_item(request, repo_id: int, action_item_id: int):
+    action_item = ActionItem.objects.get(id=action_item_id, repo_id=repo_id)
+    return action_item
+
+
+# ── Abandoned Ownership Files ─────────────────────────────────────────
+
+class AbandonedOwnershipFileSchema(Schema):
+    file_path: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+    last_active: Optional[datetime] = None
+
+class AbandonedOwnershipResponseSchema(Schema):
+    total_count: int
+    files: List[AbandonedOwnershipFileSchema]
+
+@router.get("/repos/{repo_id}/abandoned-ownership-files", response=AbandonedOwnershipResponseSchema)
+def get_abandoned_ownership_files(
+    request,
+    repo_id: int,
+    min_ownership: float = 80.0,
+    max_ownership: float = 100.0,
+    inactive_months: int = 6,
+    k: int = None,
+):
+    from dateutil.relativedelta import relativedelta
+
+    cutoff = django_timezone.now() - relativedelta(months=inactive_months)
+
+    metrics = list(
+        FileOwnershipMetric.objects.filter(
+            file__module_id__repo_id=repo_id,
+            type=InteractionType.WROTE,
+            lines_owned_percentage__gte=min_ownership,
+            lines_owned_percentage__lte=max_ownership,
+            engineer__last_active__lt=cutoff,
+        )
+        .select_related('file', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+
+    total_count = len(metrics)
+    if k is not None:
+        metrics = metrics[:k]
+
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": m.file.file_path,
+                "engineer_id": m.engineer_id,
+                "engineer_name": m.engineer.name,
+                "lines_owned_percentage": m.lines_owned_percentage,
+                "last_active": m.engineer.last_active,
+            }
+            for m in metrics
+        ],
     }

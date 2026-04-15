@@ -187,3 +187,40 @@ RISK_CONFIG = {
     "KNOWLEDGE_DISTRIBUTED_SCORE": 1.0,
     "KNOWLEDGE_ABANDONED_MULTIPLIER": 1.5,
 }
+
+# Ollama (Local LLM) Configuration
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'deepseek-r1:8b')
+OLLAMA_TEMPERATURE = float(os.getenv('OLLAMA_TEMPERATURE', '0.2'))
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'risk_dashboard': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'git_blame_ingestion_app': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'code_ownership': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}

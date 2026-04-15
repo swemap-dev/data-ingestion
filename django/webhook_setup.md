@@ -32,6 +32,11 @@ Ensure you are in the `django/backend` directory and have your environment activ
 ## 1. Start Up Sequence (Run in separate terminals)
 
 ### Terminal A: Celery Worker
+Start Redis in the background:
+```
+brew install redis && brew services start redis
+```
+
 This processes the background jobs (Make sure Docker is up and running).
 ```bash
 # Must be run from django/backend/ directory
@@ -90,6 +95,12 @@ Run initialization pass for all demo repo:
 python manage.py init_repo "https://github.com/justin-chung-swemap/swemap-demo"
 ```
 
+## Run LLM API
+In a seperate terminal:
+```
+curl -X POST http://localhost:8000/api/risk/repos/24/generate-action-items?top_k=5
+```
+
 ## Run Tests
 Grant permission to postgres user to create database:
 ```bash
@@ -108,6 +119,10 @@ python manage.py test risk_dashboard.tests.ChangeFrequencyBasicTests -v2
 ```
 
 ## Supabase
+### Dashboard (Local)
+In ```data-ingestion/supabase/``` run ```supabase start```.
+Data are stored in local docker container images. To view them, go to http://127.0.0.1:54323.
+
 ### Credentials
 ╭──────────────────────────────────────╮
 │ 🔧 Development Tools                 │
