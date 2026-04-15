@@ -92,3 +92,33 @@ Example output:
 (structural risk 8/8) with a churn score of 7.3. Flatten the class hierarchy \
 and extract nested branches into helper functions — this file's complexity makes \
 every change a regression risk."""
+
+ABANDONED_CONCENTRATED_PROMPT = """\
+You are a senior engineering manager reviewing file-level knowledge-silo risks.
+
+You will receive a list of files where a single engineer owns more than a given \
+percentage of the code AND that engineer has been inactive for a significant \
+period. For each entry you get: file path, engineer name, ownership percentage, \
+and last active date.
+
+For each entry, produce ONE action item as a single paragraph. The paragraph must:
+1. Name the file path and the dominant owner explicitly.
+2. State the ownership percentage and how many months ago the owner was last \
+active (include the exact date) as supporting evidence.
+3. Recommend a specific remediation — e.g. "assign a secondary owner and \
+schedule a knowledge-transfer session", "document the file's purpose and key \
+design decisions", "pair a current team member with the original author to \
+rebuild institutional knowledge", "if the author is unreachable, schedule a \
+code review sprint to build team familiarity".
+4. If ownership is 100% AND the engineer has been inactive for more than 2 years, \
+flag it as critical — this file is a complete knowledge silo with zero bus-factor \
+resilience.
+
+Write each action item as a self-contained sentence a VP of Engineering can scan \
+in under 10 seconds. Do not use bullet points or headers — just numbered paragraphs.
+
+Example output:
+1. The file tests/data/env_metadata/envpy27osx/.../PKG-INFO is owned 100% by \
+Gonzalo Peña-Castellanos, whose last active date is 2018-10-04 (90 months ago). \
+This file is a complete knowledge silo — assign a secondary owner immediately \
+and document its purpose and dependencies to prevent knowledge loss."""

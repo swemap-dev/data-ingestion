@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.utils import timezone as django_timezone
 from typing import List, Dict, Any, Optional
 from ninja import Router, Schema, Query
 from django.conf import settings
@@ -786,8 +787,9 @@ def post_generate_action_items(
     repo_id: int,
     top_k: int = 15,
     context_types: List[str] = Query(None),
+    context: Optional[str] = None
 ):
-    return generate_action_items(repo_id, context_types=context_types, top_k=top_k)
+    return generate_action_items(repo_id, context_types=context_types, context=context, top_k=top_k)
 
 
 # ── Fetch Action Items ────────────────────────────────────────────────
@@ -803,3 +805,60 @@ class ActionItemSchema(Schema):
 def get_action_item(request, repo_id: int, action_item_id: int):
     action_item = ActionItem.objects.get(id=action_item_id, repo_id=repo_id)
     return action_item
+
+
+# ── Abandoned Ownership Files ─────────────────────────────────────────
+
+class AbandonedOwnershipFileSchema(Schema):
+    file_path: str
+    engineer_id: int
+    engineer_name: str
+    lines_owned_percentage: float
+    last_active: Optional[datetime] = None
+
+class AbandonedOwnershipResponseSchema(Schema):
+    total_count: int
+    files: List[AbandonedOwnershipFileSchema]
+
+@router.get("/repos/{repo_id}/abandoned-ownership-files", response=AbandonedOwnershipResponseSchema)
+def get_abandoned_ownership_files(
+    request,
+    repo_id: int,
+    min_ownership: float = 80.0,
+    max_ownership: float = 100.0,
+    inactive_months: int = 6,
+    k: int = None,
+):
+    from dateutil.relativedelta import relativedelta
+
+    cutoff = django_timezone.now() - relativedelta(months=inactive_months)
+
+    metrics = list(
+        FileOwnershipMetric.objects.filter(
+            file__module_id__repo_id=repo_id,
+            type=InteractionType.WROTE,
+            lines_owned_percentage__gte=min_ownership,
+            lines_owned_percentage__lte=max_ownership,
+            engineer__last_active__lt=cutoff,
+        )
+        .select_related('file', 'engineer')
+        .order_by('-lines_owned_percentage')
+    )
+
+    total_count = len(metrics)
+    if k is not None:
+        metrics = metrics[:k]
+
+    return {
+        "total_count": total_count,
+        "files": [
+            {
+                "file_path": m.file.file_path,
+                "engineer_id": m.engineer_id,
+                "engineer_name": m.engineer.name,
+                "lines_owned_percentage": m.lines_owned_percentage,
+                "last_active": m.engineer.last_active,
+            }
+            for m in metrics
+        ],
+    }

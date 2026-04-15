@@ -13,7 +13,7 @@ from git_blame_ingestion_app.models import (
 )
 from .prompts import (
     SYSTEM_PROMPT, BUS_FACTOR_PROMPT, VOLATILE_HUB_PROMPT,
-    COMPLEXITY_HOTSPOT_PROMPT,
+    COMPLEXITY_HOTSPOT_PROMPT, ABANDONED_CONCENTRATED_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +190,41 @@ def build_under_reviewed_context(
     return "\n".join(lines)
 
 
+def build_abandoned_concentrated_files_context(
+    repo_id: int, min_ownership: float = 80.0, inactive_months: int = 6, top_k: int = 10,
+) -> str:
+    from dateutil.relativedelta import relativedelta
+    cutoff = timezone.now() - relativedelta(months=inactive_months)
+
+    metrics = list(
+        FileOwnershipMetric.objects.filter(
+            file__module_id__repo_id=repo_id,
+            type=InteractionType.WROTE,
+            lines_owned_percentage__gte=min_ownership,
+            engineer__last_active__lt=cutoff,
+        )
+        .select_related('file', 'engineer')
+        .order_by('-lines_owned_percentage')[:top_k]
+    )
+    logger.info(
+        f"[LLM] Gathered {len(metrics)} abandoned concentrated files "
+        f"(ownership>={min_ownership}%, inactive>={inactive_months}mo)"
+    )
+    if not metrics:
+        return ""
+    lines = [
+        f"## Abandoned Concentrated Files "
+        f"(>={min_ownership}% single-owner, inactive >={inactive_months} months)"
+    ]
+    for m in metrics:
+        lines.append(
+            f"- {m.file.file_path}  engineer={m.engineer.name}  "
+            f"ownership={m.lines_owned_percentage:.1f}%  "
+            f"last_active={m.engineer.last_active.isoformat() if m.engineer.last_active else 'unknown'}"
+        )
+    return "\n".join(lines)
+
+
 # ── Registry of named context builders ─────────────────────────────────
 # Each entry maps a context type to its data builder and a specific prompt.
 # When a single context type is requested, its prompt is used as the system
@@ -203,6 +238,7 @@ CONTEXT_BUILDERS = {
     "complexity_hotspot":     {"builder": build_complexity_hotspot_context,     "prompt": COMPLEXITY_HOTSPOT_PROMPT},
     "module_risk":            {"builder": build_module_risk_context,            "prompt": SYSTEM_PROMPT},
     "under_reviewed":         {"builder": build_under_reviewed_context,         "prompt": SYSTEM_PROMPT},
+    "abandoned_concentrated_files": {"builder": build_abandoned_concentrated_files_context, "prompt": ABANDONED_CONCENTRATED_PROMPT},
 }
 
 # The default set used when no context_types are specified
