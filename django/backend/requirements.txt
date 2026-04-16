@@ -9,3 +9,6 @@ django-ninja-jwt
 django-cors-headers
 openai
 networkx
+transformers
+torch
+faiss-cpu

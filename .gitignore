@@ -25,3 +25,5 @@ data/
 playground/
 data/
 **/artifacts/*.pickle
+**/artifacts/*.index
+**/artifacts/*.json
