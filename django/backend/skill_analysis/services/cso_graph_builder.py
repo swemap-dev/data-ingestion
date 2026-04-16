@@ -6,6 +6,8 @@ from urllib.parse import unquote
 
 import networkx as nx
 
+from skill_analysis.services.skill_graph_builder import SkillGraphBuilder
+
 logger = logging.getLogger(__name__)
 
 EDGE_PREDICATES = {
@@ -14,19 +16,18 @@ EDGE_PREDICATES = {
 }
 
 
-class CSOGraphBuilder:
+class CSOGraphBuilder(SkillGraphBuilder):
     """
-    Builds an nx.MultiDiGraph from CSO CSV triples.
+    Builds an nx.MultiDiGraph from CSO RDF triples (URI-based, with synonyms).
 
-    Three-phase construction:
-      A) Parse relatedEquivalent + preferentialEquivalent -> synonym_map
-      B) Inject canonical nodes with label + vector_index
-      C) Inject taxonomy/contribution edges using canonical URIs
+    Extends SkillGraphBuilder with CSO-specific logic:
+      - URI parsing (angle brackets, URL encoding)
+      - Synonym collapse via relatedEquivalent + preferentialEquivalent
+      - rdfs:label extraction
     """
 
     def __init__(self, csv_path: str | Path):
-        self._csv_path = Path(csv_path)
-        self.graph: nx.MultiDiGraph = nx.MultiDiGraph()
+        super().__init__(csv_path, edge_predicates=EDGE_PREDICATES)
         self._synonym_map: dict[str, str] = {}
         self._labels: dict[str, str] = {}
         self._preferred: dict[str, str] = {}
@@ -38,7 +39,7 @@ class CSOGraphBuilder:
         self._inject_edges(triples)
         return self.graph
 
-    # ── CSV Parsing ──────────────────────────────────────────────
+    # ── CSV Parsing (CSO-specific RDF format) ────────────────────
 
     def _parse_csv(self) -> list[tuple[str, str, str]]:
         triples: list[tuple[str, str, str]] = []
@@ -81,7 +82,6 @@ class CSOGraphBuilder:
     @staticmethod
     def _extract_label_literal(raw: str) -> str:
         s = raw.strip().strip('"')
-        # Strip RDF language tag like @en .
         if '@' in s:
             s = s[:s.rfind('@')].strip().strip('"')
         return s
@@ -111,23 +111,21 @@ class CSOGraphBuilder:
         )
 
     def _pick_canonical(self, component: set[str]) -> str:
-        # Prefer the preferentialEquivalent target if it's in the component
         for uri in component:
             target = self._preferred.get(uri)
             if target and target in component:
                 return target
-        # Fallback: shortest URI (least likely to be a variant spelling)
         return min(component, key=len)
 
     def _canonicalize(self, uri: str) -> str:
         return self._synonym_map.get(uri, uri)
 
-    # ── Phase B: Node Injection ──────────────────────────────────
+    # ── Phase B: Node Injection (with synonym resolution) ────────
 
     def _inject_nodes(self, triples: list[tuple[str, str, str]]) -> None:
         canonical_uris: set[str] = set()
         for sub, pred, obj in triples:
-            if pred in EDGE_PREDICATES:
+            if pred in self._edge_predicates:
                 canonical_uris.add(self._canonicalize(sub))
                 canonical_uris.add(self._canonicalize(obj))
 
@@ -139,23 +137,21 @@ class CSOGraphBuilder:
         logger.info("Injected %d nodes", self.graph.number_of_nodes())
 
     def _resolve_label(self, canonical_uri: str) -> str:
-        # Check if any URI that maps to this canonical has an rdfs:label
         if canonical_uri in self._labels:
             return self._labels[canonical_uri]
-        # Check synonyms that point to this canonical
         for uri, canon in self._synonym_map.items():
             if canon == canonical_uri and uri in self._labels:
                 return self._labels[uri]
         return self._label_from_uri(canonical_uri)
 
-    # ── Phase C: Edge Injection ──────────────────────────────────
+    # ── Phase C: Edge Injection (with synonym resolution) ────────
 
     def _inject_edges(self, triples: list[tuple[str, str, str]]) -> None:
         seen: set[tuple[str, str, str]] = set()
         skipped_self_loops = 0
         skipped_duplicates = 0
         for sub, pred, obj in triples:
-            rel_type = EDGE_PREDICATES.get(pred)
+            rel_type = self._edge_predicates.get(pred)
             if rel_type is None:
                 continue
             s = self._canonicalize(sub)
@@ -177,12 +173,6 @@ class CSOGraphBuilder:
             skipped_duplicates,
         )
 
-    # ── Public API ───────────────────────────────────────────────
-
-    def get_vectorization_list(self) -> list[str]:
-        nodes = sorted(self.graph.nodes(data=True), key=lambda x: x[1]['vector_index'])
-        return [data['label'] for _, data in nodes]
-
     # ── Persistence ──────────────────────────────────────────────
 
     def save(self, path: str | Path) -> None:
@@ -198,5 +188,5 @@ class CSOGraphBuilder:
             data = pickle.load(f)
         builder = cls.__new__(cls)
         builder.graph = data['graph']
-        builder._synonym_map = data['synonym_map']
+        builder._synonym_map = data.get('synonym_map', {})
         return builder

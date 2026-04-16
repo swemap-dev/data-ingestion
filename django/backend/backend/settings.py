@@ -147,9 +147,31 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-# CSO Graph Configuration
-CSO_CSV_PATH = BASE_DIR.parent.parent / 'data' / 'CSO.3.4.1.csv'
-CSO_GRAPH_ARTIFACT_PATH = BASE_DIR / 'skill_analysis' / 'artifacts' / 'cso_graph.pickle'
+# Skill Graph Configuration
+_ARTIFACTS_DIR = BASE_DIR / 'skill_analysis' / 'artifacts'
+_DATA_DIR = BASE_DIR.parent.parent / 'data'
+
+SKILL_DATASETS = {
+    'cso': {
+        'csv_path': _DATA_DIR / 'CSO.3.4.1.csv',
+        'builder': 'skill_analysis.services.cso_graph_builder.CSOGraphBuilder',
+        'graph_path': _ARTIFACTS_DIR / 'cso_graph.pickle',
+        'index_path': _ARTIFACTS_DIR / 'cso_vector_db.index',
+        'mapping_path': _ARTIFACTS_DIR / 'cso_vector_mapping.json',
+    },
+    'conda': {
+        'csv_path': _DATA_DIR / 'conda_skill_tree.csv',
+        'builder': 'skill_analysis.services.skill_graph_builder.SkillGraphBuilder',
+        'graph_path': _ARTIFACTS_DIR / 'conda_graph.pickle',
+        'index_path': _ARTIFACTS_DIR / 'conda_vector_db.index',
+        'mapping_path': _ARTIFACTS_DIR / 'conda_vector_mapping.json',
+    },
+}
+
+# Legacy aliases (used by existing lazy accessors)
+CSO_GRAPH_ARTIFACT_PATH = SKILL_DATASETS['cso']['graph_path']
+CSO_VECTOR_INDEX_PATH = SKILL_DATASETS['cso']['index_path']
+CSO_VECTOR_MAPPING_PATH = SKILL_DATASETS['cso']['mapping_path']
 
 # Risk Dashboard Configuration
 RISK_CONFIG = {
