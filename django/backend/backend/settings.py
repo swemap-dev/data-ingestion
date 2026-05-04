@@ -193,6 +193,13 @@ SKILL_DATASETS = {
         'index_path': _ARTIFACTS_DIR / 'conda_vector_db.index',
         'mapping_path': _ARTIFACTS_DIR / 'conda_vector_mapping.json',
     },
+    'swe_anchor': {
+        'csv_path': _DATA_DIR / 'swe_concept_anchors.csv',
+        'builder': 'skill_analysis.services.swe_anchor_graph_builder.SWEAnchorGraphBuilder',
+        'graph_path': _ARTIFACTS_DIR / 'swe_anchor_graph.pickle',
+        'index_path': _ARTIFACTS_DIR / 'swe_anchor_vector_db.index',
+        'mapping_path': _ARTIFACTS_DIR / 'swe_anchor_vector_mapping.json',
+    },
 }
 
 # Legacy aliases (used by existing lazy accessors)

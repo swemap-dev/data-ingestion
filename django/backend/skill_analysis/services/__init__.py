@@ -24,11 +24,23 @@ _vector_mapping: list[str] | None = None
 def get_cso_vector_index():
     global _vector_index, _vector_mapping
     if _vector_index is None:
-        import faiss  # noqa: F811 — deferred to avoid hard dependency at import time
-
         from skill_analysis.services.cso_vectorizer import CSOVectorizer
         _vector_index, _vector_mapping = CSOVectorizer.load(
             settings.CSO_VECTOR_INDEX_PATH,
             settings.CSO_VECTOR_MAPPING_PATH,
         )
     return _vector_index, _vector_mapping
+
+
+_matchers: dict[str, 'CodeSkillMatcher'] = {}  # noqa: F821
+
+
+def get_code_skill_matcher(dataset: str = 'conda'):
+    """Lazy-load a CodeSkillMatcher for the given dataset."""
+    if dataset not in _matchers:
+        config = settings.SKILL_DATASETS[dataset]
+        from skill_analysis.services.code_skill_matcher import CodeSkillMatcher
+        from skill_analysis.services.cso_vectorizer import CSOVectorizer
+        index, mapping = CSOVectorizer.load(config['index_path'], config['mapping_path'])
+        _matchers[dataset] = CodeSkillMatcher(index, mapping)
+    return _matchers[dataset]

@@ -1,33 +1,24 @@
-import gc
 import json
 import logging
-import math
 import os
 from pathlib import Path
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-# torch MUST be imported before faiss to avoid libomp segfault on macOS
-import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
+# torch MUST be imported before faiss to avoid libomp segfault on macOS.
+# Importing embedding first ensures torch is loaded before faiss.
+from skill_analysis.services.embedding import EMBEDDING_DIM, get_encoder
 
 import faiss
 
+# FAISS + torch both link libomp on macOS; multi-threaded FAISS calls can
+# deadlock in __kmp_join_barrier after torch initializes its own OMP runtime.
+faiss.omp_set_num_threads(1)
+
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "microsoft/graphcodebert-base"
 MAX_LENGTH = 64
 BATCH_SIZE = 64
-EMBEDDING_DIM = 768
-
-
-def _normalize_l2(vectors: np.ndarray) -> np.ndarray:
-    """L2-normalize rows in-place using numpy (avoids faiss.normalize_L2 crash on some platforms)."""
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0] = 1
-    vectors /= norms
-    return vectors
 
 
 class CSOVectorizer:
@@ -40,49 +31,17 @@ class CSOVectorizer:
         self._batch_size = batch_size
 
     def build(self) -> tuple[faiss.Index, list[str]]:
-        embeddings = self._embed_all()
-        _normalize_l2(embeddings)
+        encoder = get_encoder()
+        embeddings = encoder.encode(
+            self._labels,
+            max_length=MAX_LENGTH,
+            batch_size=self._batch_size,
+            normalize=True,
+        )
         index = faiss.IndexFlatIP(EMBEDDING_DIM)
         index.add(embeddings)
         logger.info("FAISS index built: d=%d, ntotal=%d", index.d, index.ntotal)
         return index, self._uris
-
-    def _embed_all(self) -> np.ndarray:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info("Loading model %s on %s", MODEL_NAME, device)
-
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model = AutoModel.from_pretrained(MODEL_NAME).to(device)
-        model.eval()
-
-        n = len(self._labels)
-        embeddings = np.zeros((n, EMBEDDING_DIM), dtype=np.float32)
-        total_batches = math.ceil(n / self._batch_size)
-
-        for i in range(0, n, self._batch_size):
-            batch = self._labels[i : i + self._batch_size]
-            inputs = tokenizer(
-                batch,
-                padding=True,
-                truncation=True,
-                max_length=MAX_LENGTH,
-                return_tensors="pt",
-            ).to(device)
-
-            with torch.no_grad():
-                outputs = model(**inputs)
-                cls_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-                embeddings[i : i + len(batch)] = cls_embeddings
-
-            batch_num = i // self._batch_size + 1
-            if batch_num % 10 == 0 or batch_num == total_batches:
-                logger.info("Embedded batch %d/%d", batch_num, total_batches)
-
-        # Free model memory before building FAISS index
-        del model, tokenizer
-        gc.collect()
-
-        return embeddings
 
     @staticmethod
     def save(
@@ -117,26 +76,9 @@ class CSOVectorizer:
         k: int = 3,
     ) -> list[tuple[str, float]]:
         """Query the FAISS index with arbitrary text. Returns list of (uri, score) tuples."""
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model = AutoModel.from_pretrained(MODEL_NAME)
-        model.eval()
-
-        inputs = tokenizer(
-            [query_text],
-            padding=True,
-            truncation=True,
-            max_length=MAX_LENGTH,
-            return_tensors="pt",
-        )
-        with torch.no_grad():
-            vec = model(**inputs).last_hidden_state[:, 0, :].numpy().astype(np.float32)
-        _normalize_l2(vec)
-
+        encoder = get_encoder()
+        vec = encoder.encode_single(query_text, max_length=MAX_LENGTH)
         scores, result_indices = index.search(vec, k)
-
-        del model, tokenizer
-        gc.collect()
-
         return [(uris[idx], float(score)) for score, idx in zip(scores[0], result_indices[0])]
 
     @staticmethod
@@ -150,24 +92,13 @@ class CSOVectorizer:
             f"index.ntotal={index.ntotal} != len(uris)={len(uris)}"
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model = AutoModel.from_pretrained(MODEL_NAME)
-        model.eval()
+        encoder = get_encoder()
 
         # Self-consistency: pick 3 labels, each should return itself as top-1
         test_indices = [0, len(labels) // 2, len(labels) - 1]
         for idx in test_indices:
             label = labels[idx]
-            inputs = tokenizer(
-                [label],
-                padding=True,
-                truncation=True,
-                max_length=MAX_LENGTH,
-                return_tensors="pt",
-            )
-            with torch.no_grad():
-                vec = model(**inputs).last_hidden_state[:, 0, :].numpy().astype(np.float32)
-            _normalize_l2(vec)
+            vec = encoder.encode_single(label, max_length=MAX_LENGTH)
             scores, result_indices = index.search(vec, 1)
             top_score = scores[0][0]
             top_idx = result_indices[0][0]
@@ -189,21 +120,10 @@ class CSOVectorizer:
 
         # Query test: find top-3 closest topics to "asyncio"
         query_text = "asyncio"
-        inputs = tokenizer(
-            [query_text],
-            padding=True,
-            truncation=True,
-            max_length=MAX_LENGTH,
-            return_tensors="pt",
-        )
-        with torch.no_grad():
-            vec = model(**inputs).last_hidden_state[:, 0, :].numpy().astype(np.float32)
-        _normalize_l2(vec)
+        vec = encoder.encode_single(query_text, max_length=MAX_LENGTH)
         scores, result_indices = index.search(vec, 3)
         logger.info("Query test: '%s' -> top-3 results:", query_text)
         for score, idx in zip(scores[0], result_indices[0]):
             logger.info("  %s (score=%.4f)", uris[idx].split('/')[-1], score)
 
-        del model, tokenizer
-        gc.collect()
         logger.info("All sanity checks passed")

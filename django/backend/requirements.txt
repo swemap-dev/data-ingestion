@@ -14,3 +14,7 @@ dj-database-url
 tree-sitter
 tree-sitter-python
 tree-sitter-javascript
+transformers>=4.44,<5
+torch
+faiss-cpu
+einops
