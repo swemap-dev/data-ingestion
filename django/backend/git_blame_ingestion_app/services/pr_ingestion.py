@@ -12,14 +12,22 @@ logger = logging.getLogger(__name__)
 
 def ingest_merged_prs(repo_id, owner, name, lookback_days=None):
     """Fetch merged PRs from GitHub and store them with their changed files."""
-    if lookback_days is None:
-        lookback_days = settings.RISK_CONFIG["CHURN_LOOKBACK_DAYS"]
-
-    since = timezone.now() - timedelta(days=lookback_days)
+    
+    # Determine the 'since' date
+    last_pr = PullRequest.objects.filter(repo_id=repo_id).order_by('-merged_at').first()
+    
+    if last_pr and lookback_days is None:
+        # If we already have PRs and no explicit lookback was requested, 
+        # only fetch PRs merged after the last one we saw to save API calls.
+        since = last_pr.merged_at
+    else:
+        if lookback_days is None:
+            lookback_days = settings.RISK_CONFIG["CHURN_LOOKBACK_DAYS"]
+        since = timezone.now() - timedelta(days=lookback_days)
 
     client = GitHubClient()
     merged_pulls = client.get_merged_pulls(owner, name, since)
-    logger.info(f"Fetched {len(merged_pulls)} merged PRs for {owner}/{name} since {since.date()}")
+    logger.info(f"Fetched {len(merged_pulls)} merged PRs for {owner}/{name} since {since}")
 
     for pr_data in merged_pulls:
         from datetime import datetime

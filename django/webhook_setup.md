@@ -40,7 +40,8 @@ brew install redis && brew services start redis
 This processes the background jobs (Make sure Docker is up and running).
 ```bash
 # Must be run from django/backend/ directory
-celery -A backend worker -l info
+# The -B flag runs the Beat scheduler alongside the worker so you only need one terminal!
+celery -A backend worker -B -l info
 ```
 
 ### Terminal B: Django Server

@@ -211,35 +211,50 @@ def recalculate_affected_modules(module_ids):
     """
     Recalculate metrics for specific modules after a webhook push.
     Only processes the modules that had files modified in the push.
+    Runs fast file/module level metrics (ownership, AST complexity).
     """
-    from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
     from risk_dashboard.services.structural_complexity import calculate_structural_complexity
-    from risk_dashboard.services.change_frequency import calculate_change_frequency
-    from .services.pr_ingestion import ingest_merged_prs
-
-    # PR ingestion, change frequency, and structural hubs are repo-wide — run once, not per module
-    if module_ids:
-        from .models import Module
-        first_module = Module.objects.get(id=module_ids[0])
-        repo = first_module.repo
-        ingest_merged_prs(repo.id, repo.owner, repo.name)
-        calculate_change_frequency(repo.id)
 
     for module_id in module_ids:
-        logger.info(f"Recalculating metrics for affected module {module_id}")
+        logger.info(f"Recalculating real-time metrics for affected module {module_id}")
         ingestion.calculate_module_metrics(module_id)
         calculate_structural_complexity(module_id)
 
-    # Structural hubs require the full repo graph — run once after per-module metrics
-    if module_ids:
-        logger.info(f"Recalculating structural hubs for repo {repo.id}")
-        calculate_structural_hubs(repo.id)
+    logger.info(f"Recalculated real-time metrics for {len(module_ids)} affected module(s)")
 
-        from risk_dashboard.services.composite_risk import calculate_composite_risk
-        logger.info(f"Recalculating composite risk for repo {repo.id}")
-        calculate_composite_risk(repo.id)
+@shared_task
+def nightly_repo_recalculation(repo_id=None):
+    """
+    Nightly cron job to calculate heavy repository-wide metrics.
+    If repo_id is provided, runs for that repo. Otherwise runs for all repos.
+    """
+    from .models import Repo
+    from risk_dashboard.services.brain_file_analysis import calculate_structural_hubs
+    from risk_dashboard.services.change_frequency import calculate_change_frequency
+    from risk_dashboard.services.composite_risk import calculate_composite_risk
+    from .services.pr_ingestion import ingest_merged_prs
 
-    logger.info(f"Recalculated metrics for {len(module_ids)} affected module(s)")
+    repos = Repo.objects.filter(id=repo_id) if repo_id else Repo.objects.all()
+
+    for repo in repos:
+        logger.info(f"Starting nightly recalculation for repo {repo.id} ({repo.name})")
+        
+        try:
+            logger.info(f"Ingesting merged PRs for repo {repo.id}")
+            ingest_merged_prs(repo.id, repo.owner, repo.name)
+            
+            logger.info(f"Calculating Change Frequency for repo {repo.id}")
+            calculate_change_frequency(repo.id)
+            
+            logger.info(f"Calculating Structural Hubs for repo {repo.id}")
+            calculate_structural_hubs(repo.id)
+            
+            logger.info(f"Calculating Composite Risk for repo {repo.id}")
+            calculate_composite_risk(repo.id)
+            
+            logger.info(f"Nightly recalculation complete for repo {repo.id}")
+        except Exception as e:
+            logger.error(f"Error during nightly recalculation for repo {repo.id}: {e}", exc_info=True)
 
 @shared_task
 def finalize_repo_ingestion(repo_id):
