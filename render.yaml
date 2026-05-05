@@ -19,7 +19,8 @@ services:
     buildCommand: "./django/backend/build.sh"
     # We run Celery in the background (&) and Gunicorn in the foreground!
     # Because & separates commands, we must use --chdir for gunicorn to find the code
-    startCommand: "cd django/backend && celery -A backend worker -B -l info & gunicorn --chdir django/backend backend.wsgi:application"
+    # We MUST set --concurrency=1 otherwise Celery preforks 8 times and instantly crashes the 512MB free tier!
+    startCommand: "cd django/backend && celery -A backend worker -B --concurrency=1 -l info & gunicorn --chdir django/backend backend.wsgi:application"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
