@@ -119,6 +119,40 @@ Run a class of tests of an app:
 python manage.py test risk_dashboard.tests.ChangeFrequencyBasicTests -v2
 ```
 
+## Render
+I've just written the GitHub Action file for you at .github/workflows/wake_server.yml!
+
+Because GitHub Actions run on UTC time, and New York Time has Daylight Saving Time (switching between UTC-4 and UTC-5), scheduling crons is notoriously annoying. I've designed this workflow to ping your server at a few intervals right before 3 AM and 4 AM UTC. This completely sidesteps Daylight Saving Time and guarantees your server will be wide awake exactly at Midnight, all year round!
+
+Here is the step-by-step guide to get it fully wired up:
+
+**1. Add your Render URL to GitHub Secrets**
+
+Because your Render URL might change or you might want to keep it private, the script expects a GitHub Secret named RENDER_WEB_URL.
+1. Once your Render Web Service is deployed, copy its live URL (e.g., https://swemap-web.onrender.com). Make sure there is no trailing slash!
+2. Go to your repository on GitHub.com.
+3. Click Settings > Secrets and variables > Actions.
+4. Click New repository secret.
+5. Name: RENDER_WEB_URL
+6. Value: Paste your Render URL.
+7. Click Add secret.
+
+**2. Commit and Push**
+Now, simply commit the file I just created:
+
+```bash
+git add .github/workflows/wake_server.yml
+git commit -m "Add GitHub action to wake Render server before midnight"
+git push origin main
+```
+
+**3. Verify it works!**
+You don't have to wait until midnight to test it.
+1. Go to the Actions tab on your GitHub repository.
+2. You will see a workflow on the left called Wake Render Server. Click it.
+3. Because I added the workflow_dispatch trigger, you will see a "Run workflow" button on the right side of the screen.
+4. Click it to manually trigger the ping! If the run succeeds (green checkmark), your workaround is completely finished and fully operational!
+
 ## Supabase
 ### Dashboard (Local)
 In ```data-ingestion/supabase/``` run ```supabase start```.

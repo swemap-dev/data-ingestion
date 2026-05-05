@@ -48,10 +48,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-ch5hlj_-0l2fbju98__ovh*@4%2mx15*!a=+^&)n)81-i2g)$n'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Automatically set DEBUG=False if running on Render.com
+DEBUG = 'RENDER' not in os.environ
 
-# TODO: Set ALLOWED_HOSTS in production
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['*'] # In production, you can restrict this to your specific render URL
 
 
 # Application definition
@@ -167,6 +167,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Skill Graph Configuration
 _ARTIFACTS_DIR = BASE_DIR / 'skill_analysis' / 'artifacts'
@@ -269,6 +270,11 @@ LOGGING = {
         'code_ownership': {
             'handlers': ['console'],
             'level': 'INFO',
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
         },
     },
 }
