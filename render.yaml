@@ -1,0 +1,92 @@
+databases:
+  - name: swemap-db
+    databaseName: swemap
+    user: swemap_user
+
+redis:
+  - name: swemap-redis
+
+services:
+  # 1. Django Web Service
+  - type: web
+    name: swemap-web
+    env: python
+    buildCommand: "./django/backend/build.sh"
+    startCommand: "cd django/backend && gunicorn backend.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: swemap-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: OLLAMA_BASE_URL
+        value: "PLACEHOLDER_FOR_FUTURE_LLM_URL"
+
+  # 2. Celery Worker (Executes the heavy jobs)
+  - type: worker
+    name: swemap-celery-worker
+    env: python
+    buildCommand: "./django/backend/build.sh"
+    startCommand: "cd django/backend && celery -A backend worker -l info"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: swemap-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: OLLAMA_BASE_URL
+        value: "PLACEHOLDER_FOR_FUTURE_LLM_URL"
+
+  # 3. Celery Beat (Schedules the nightly jobs)
+  - type: worker
+    name: swemap-celery-beat
+    env: python
+    buildCommand: "./django/backend/build.sh"
+    startCommand: "cd django/backend && celery -A backend beat -l info"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: swemap-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: swemap-redis
+          property: connectionString
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: OLLAMA_BASE_URL
+        value: "PLACEHOLDER_FOR_FUTURE_LLM_URL"

@@ -12,3 +12,5 @@ networkx
 transformers
 torch
 faiss-cpu
+gunicorn
+dj-database-url
