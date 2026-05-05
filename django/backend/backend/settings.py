@@ -28,7 +28,7 @@ CELERY_TIMEZONE = 'America/New_York'
 CELERY_BEAT_SCHEDULE = {
     'nightly-repo-recalculation': {
         'task': 'git_blame_ingestion_app.tasks.nightly_repo_recalculation',
-        'schedule': crontab(hour=20, minute=50),  # 8:40 PM CDT
+        'schedule': crontab(hour=0, minute=0),  # 12:00 AM Midnight
     },
 }
 

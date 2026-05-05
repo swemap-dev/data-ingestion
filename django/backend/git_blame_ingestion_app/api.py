@@ -15,6 +15,11 @@ api = NinjaAPI()
 api.add_router("/ownership", ownership_router)
 api.add_router("/risk", risk_router)
 
+@api.get("/health")
+def health_check(request):
+    """Used by cron-job.org to keep the free Render server awake before midnight"""
+    return {"status": "awake"}
+
 class ModuleSchema(Schema):
     module_id: int
     module_name: str
