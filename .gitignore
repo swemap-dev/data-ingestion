@@ -27,3 +27,6 @@ data/
 **/artifacts/*.pickle
 **/artifacts/*.index
 **/artifacts/*.json
+
+# Celery Beat schedule file
+celerybeat-schedule*

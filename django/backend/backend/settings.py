@@ -20,6 +20,18 @@ load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
 
+from celery.schedules import crontab
+
+# Set Celery timezone to CDT/CST
+CELERY_TIMEZONE = 'America/New_York'
+
+CELERY_BEAT_SCHEDULE = {
+    'nightly-repo-recalculation': {
+        'task': 'git_blame_ingestion_app.tasks.nightly_repo_recalculation',
+        'schedule': crontab(hour=20, minute=50),  # 8:40 PM CDT
+    },
+}
+
 # GitHub Configuration
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
