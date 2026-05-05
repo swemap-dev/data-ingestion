@@ -3,11 +3,13 @@ databases:
     databaseName: swemap
     user: swemap_user
 
-redis:
-  - name: swemap-redis
-
 services:
-  # 1. Django Web Service
+  # 1. Managed Redis (Key-Value)
+  - type: redis
+    name: swemap-redis
+    ipAllowList: []
+
+  # 2. Django Web Service
   - type: web
     name: swemap-web
     env: python
@@ -35,7 +37,7 @@ services:
       - key: OLLAMA_BASE_URL
         value: "PLACEHOLDER_FOR_FUTURE_LLM_URL"
 
-  # 2. Celery Worker (Executes the heavy jobs)
+  # 3. Celery Worker (Executes the heavy jobs)
   - type: worker
     name: swemap-celery-worker
     env: python
@@ -63,7 +65,7 @@ services:
       - key: OLLAMA_BASE_URL
         value: "PLACEHOLDER_FOR_FUTURE_LLM_URL"
 
-  # 3. Celery Beat (Schedules the nightly jobs)
+  # 4. Celery Beat (Schedules the nightly jobs)
   - type: worker
     name: swemap-celery-beat
     env: python
