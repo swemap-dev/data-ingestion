@@ -6,7 +6,7 @@ set -o errexit
 cd django/backend
 
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install --default-timeout=1000 -r requirements.txt
 
 # Collect static files for Django Admin
 python manage.py collectstatic --no-input

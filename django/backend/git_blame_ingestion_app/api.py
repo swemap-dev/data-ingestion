@@ -144,6 +144,20 @@ def webhook(request: HttpRequest, payload: WebhookPayload):
         
     return {"status": "ignored", "reason": f"Event {event} not handled"}
 
+class InitRepoSchema(Schema):
+    repo_url: str
+    ref: Optional[str] = None
+
+@api.post("/init-repo")
+def init_repo(request, payload: InitRepoSchema):
+    """
+    Triggers initialization for a specific repository URL.
+    Optionally accepts a ref (branch or SHA) to pin ingestion.
+    """
+    from .tasks import initialize
+    result = initialize.delay(payload.repo_url, ref=payload.ref)
+    return {"status": "triggered", "task_id": result.id, "repo": payload.repo_url}
+
 class InitAllSchema(Schema):
     ref: Optional[str] = None
 
