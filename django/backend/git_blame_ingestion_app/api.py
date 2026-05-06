@@ -18,7 +18,20 @@ api.add_router("/risk", risk_router)
 @api.get("/health")
 def health_check(request):
     """Used by cron-job.org to keep the free Render server awake before midnight"""
-    return {"status": "awake"}
+    try:
+        import subprocess
+        import sys
+        pip_freeze = subprocess.check_output([sys.executable, "-m", "pip", "freeze"]).decode("utf-8").split("\n")
+        sys_path = sys.path
+    except Exception as e:
+        pip_freeze = str(e)
+        sys_path = []
+        
+    return {
+        "status": "awake",
+        "sys_path": sys_path,
+        "pip_freeze": pip_freeze
+    }
 
 class ModuleSchema(Schema):
     module_id: int
