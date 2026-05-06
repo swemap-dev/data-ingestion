@@ -83,6 +83,18 @@ class GitHubClient:
 
         return data["data"]
 
+    def _rest_request(self, method: str, endpoint: str, params: Optional[dict] = None) -> Any:
+        """Send a REST request and return the parsed JSON response."""
+        url = f"https://api.github.com{endpoint}"
+        try:
+            response = self.session.request(method, url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            raise RuntimeError(f"GitHub REST API error {e.response.status_code}: {e.response.text}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"GitHub REST API request failed: {e}")
+
 
         
     def get_repository_metadata(self, owner: str, repo: str) -> Dict[str, Any]:
@@ -142,6 +154,44 @@ class GitHubClient:
             cursor = pr_connection["pageInfo"]["endCursor"]
 
         return merged_pulls
+    
+    def get_changed_files_since(self, owner: str, repo: str, since: datetime, branch: str = 'main') -> List[str]:
+        """
+        Fetch all commits since a given datetime on the specified branch,
+        then fetch each commit's details to aggregate a unique list of added or modified files.
+        """
+        # Fetch the list of commits since the timestamp
+        commits_endpoint = f"/repos/{owner}/{repo}/commits"
+        params = {
+            "since": since.isoformat(),
+            "sha": branch,
+            "per_page": 100
+        }
+        
+        changed_files = set()
+        page = 1
+        
+        while True:
+            params["page"] = page
+            commits = self._rest_request("GET", commits_endpoint, params=params)
+            if not commits:
+                break
+                
+            for commit_meta in commits:
+                sha = commit_meta["sha"]
+                # Fetch detailed commit info to get the files
+                commit_detail = self._rest_request("GET", f"{commits_endpoint}/{sha}")
+                for file_data in commit_detail.get("files", []):
+                    status = file_data.get("status")
+                    if status in ["added", "modified"]:
+                        changed_files.add(file_data["filename"])
+            
+            # If less than 100 commits returned, we've hit the last page
+            if len(commits) < 100:
+                break
+            page += 1
+            
+        return list(changed_files)
     
 
 

@@ -26,11 +26,16 @@ from celery.schedules import crontab
 CELERY_TIMEZONE = 'America/New_York'
 
 CELERY_BEAT_SCHEDULE = {
+    'daily-incremental-sync': {
+        'task': 'git_blame_ingestion_app.tasks.incremental_sync',
+        'schedule': crontab(hour=23, minute=30),  # 11:30 PM UTC daily (30 mins before recalculation)
+    },
     'nightly-repo-recalculation': {
         'task': 'git_blame_ingestion_app.tasks.nightly_repo_recalculation',
-        'schedule': crontab(hour=0, minute=0),  # 12:00 AM Midnight
+        'schedule': crontab(hour=0, minute=0),  # 12:00 AM UTC Midnight daily
     },
 }
+
 
 # GitHub Configuration
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')

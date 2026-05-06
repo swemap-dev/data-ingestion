@@ -56,6 +56,7 @@ class Repo(models.Model):
     language = models.CharField(max_length=100, null=True, blank=True)
     risk_score = models.FloatField(null=True, blank=True)
     rec = models.JSONField(null=True, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'repos'

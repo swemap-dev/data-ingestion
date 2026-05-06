@@ -111,6 +111,10 @@ def initialize(repo_url, ref=None):
             defaults={'url': repo_url}
         )
         
+        from django.utils import timezone
+        repo_obj.last_synced_at = timezone.now()
+        repo_obj.save(update_fields=['last_synced_at'])
+        
         from .services.module_resolver import ModuleResolver
         resolver = ModuleResolver(file_paths)
         
@@ -205,6 +209,51 @@ def initialize_all(ref=None):
         initialize.delay(url, ref=ref)
 
     return {"status": "queued", "repos": repos}
+
+@shared_task
+def incremental_sync(repo_id=None):
+    """
+    Polls GitHub for commits since the last sync timestamp and enqueues blame tasks ONLY for changed files.
+    """
+    from .models import Repo
+    from django.utils import timezone
+    repos = Repo.objects.filter(id=repo_id) if repo_id else Repo.objects.all()
+
+    client = get_shared_client()
+    for repo in repos:
+        if not repo.last_synced_at:
+            logger.warning(f"Repo {repo.name} has no last_synced_at, skipping incremental sync. Please run initialize first.")
+            continue
+
+        logger.info(f"Starting incremental sync for {repo.owner}/{repo.name} since {repo.last_synced_at}")
+        try:
+            changed_files = client.get_changed_files_since(repo.owner, repo.name, repo.last_synced_at)
+            
+            if not changed_files:
+                logger.info(f"No files changed for {repo.owner}/{repo.name} since {repo.last_synced_at}")
+            else:
+                commit_sha = 'main'
+                
+                tasks = [
+                    process_commit_blame.s(repo.owner, repo.name, commit_sha, fpath, 'main')
+                    for fpath in changed_files
+                ]
+                
+                # Identify affected modules
+                affected_module_ids = set()
+                for fpath in changed_files:
+                    module_id = ingestion.resolve_module_from_db(repo.id, fpath)
+                    if module_id:
+                        affected_module_ids.add(module_id)
+                
+                if tasks:
+                    chord(tasks)(recalculate_affected_modules.si(list(affected_module_ids)))
+                    logger.info(f"Queued {len(tasks)} blame tasks for {repo.owner}/{repo.name} incremental sync")
+            
+            repo.last_synced_at = timezone.now()
+            repo.save(update_fields=['last_synced_at'])
+        except Exception as e:
+            logger.error(f"Incremental sync failed for {repo.owner}/{repo.name}: {e}")
 
 @shared_task
 def recalculate_affected_modules(module_ids):

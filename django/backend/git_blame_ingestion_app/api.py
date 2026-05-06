@@ -145,6 +145,19 @@ def init_all(request, payload: InitAllSchema = None):
     result = initialize_all.delay()
     return {"status": "triggered", "task_id": result.id}
 
+class SyncIncrementalSchema(Schema):
+    repo_id: Optional[int] = None
+
+@api.post("/sync-incremental")
+def trigger_incremental_sync(request, payload: SyncIncrementalSchema = None):
+    """
+    Triggers incremental sync for a specific repository, or all repositories if not provided.
+    """
+    repo_id = payload.repo_id if payload else None
+    from .tasks import incremental_sync
+    result = incremental_sync.delay(repo_id=repo_id)
+    return {"status": "triggered", "task_id": result.id}
+
 
 def _build_module_tree(module):
     """Recursively builds a nested dict for a module and its children."""
