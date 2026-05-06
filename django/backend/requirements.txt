@@ -14,3 +14,6 @@ torch
 faiss-cpu
 gunicorn
 dj-database-url
+tree-sitter
+tree-sitter-python
+tree-sitter-javascript
