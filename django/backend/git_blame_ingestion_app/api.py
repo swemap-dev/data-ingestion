@@ -33,6 +33,13 @@ def health_check(request):
         "pip_freeze": pip_freeze
     }
 
+@api.get("/reset-queue")
+def reset_celery_queue(request):
+    """Purges all pending tasks from the Celery queue (Redis). Useful for completely resetting state."""
+    from celery import current_app
+    purged_count = current_app.control.purge()
+    return {"status": "success", "purged_tasks": purged_count}
+
 class ModuleSchema(Schema):
     module_id: int
     module_name: str
