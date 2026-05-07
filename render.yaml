@@ -13,8 +13,8 @@ services:
     buildCommand: "./django/backend/build.sh"
     # We run Celery in the background (&) and Gunicorn in the foreground!
     # Because & separates commands, we must use --chdir for gunicorn to find the code
-    # We MUST set --pool=solo otherwise Celery preforks 8 times and instantly crashes the 512MB free tier!
-    startCommand: "cd django/backend && celery -A backend worker -B --pool=solo -l info & gunicorn --chdir django/backend backend.wsgi:application"
+    # We MUST use threads instead of prefork to stay under 512MB RAM, while still getting high concurrency!
+    startCommand: "cd django/backend && celery -A backend worker -B --pool=threads --concurrency=4 -l info & gunicorn --chdir django/backend backend.wsgi:application"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
