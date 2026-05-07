@@ -127,24 +127,30 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
     services_list = []
     
     for module in modules:
-        # Get ownership stats for each role
-        # We take the top 1 (index 0) if available
+        # 1. Designer
+        if module.assigned_designer:
+            designer_name = module.assigned_designer.name
+        else:
+            designers = _get_module_ownership_stats(module.id, InteractionType.DESIGNED)
+            designer_name = designers[0]['engineer_name'] if designers else "Unassigned"
         
-        # 1. Writer
-        writers = get_module_writers(module.id)
-        writer_name = writers[0]['engineer_name'] if writers else "Unassigned"
+        # 2. Writer
+        if module.assigned_writer:
+            writer_name = module.assigned_writer.name
+        else:
+            writers = get_module_writers(module.id)
+            writer_name = writers[0]['engineer_name'] if writers else "Unassigned"
         
-        # 2. Reviewer
-        # TODO: change to get_module_reviewers
-        reviewers = list_module_reviewers_random(module.id)
-        reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
-        
-        # 3. Designer
-        # Checking for explicit DESIGNED interaction
-        designers = _get_module_ownership_stats(module.id, InteractionType.DESIGNED)
-        designer_name = designers[0]['engineer_name'] if designers else "Unassigned"
+        # 3. Reviewer
+        if module.assigned_reviewer:
+            reviewer_name = module.assigned_reviewer.name
+        else:
+            # Fallback to random if no actual reviewers found yet
+            reviewers = list_module_reviewers_random(module.id)
+            reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
         
         services_list.append({
+            "id": module.id, # Added ID for frontend use
             "name": module.name,
             "designer": designer_name,
             "writer": writer_name,

@@ -1,14 +1,17 @@
 from datetime import datetime, timezone
+from collections import defaultdict
 from django.utils import timezone as django_timezone
 from typing import List, Dict, Any, Optional
 from ninja import Router, Schema, Query
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from .services.risk_analytics import calculate_knowledge_distribution
 from .services.structural_complexity import NESTING_THRESHOLD, INHERITANCE_THRESHOLD
 from git_blame_ingestion_app.models import (
     ActionItem, Engineer, File, FileOwnershipMetric, InteractionType, Module,
-    ModuleOwnershipMetric, PullRequestFile,
+    ModuleOwnershipMetric, PullRequestFile, Repo,
 )
+from git_blame_ingestion_app.services.client import GitHubClient
 from .services.brain_file_analysis import calculate_structural_hubs
 from .services.llm_action_items import generate_action_items
 
@@ -861,4 +864,136 @@ def get_abandoned_ownership_files(
             }
             for m in metrics
         ],
+    }
+
+
+# ── IC Contribution Heatmap ──────────────────────────────────────────────
+
+class MonthlyCommitCellSchema(Schema):
+    month: str
+    commit_count: int
+    percentage: float
+
+class ModuleHeatmapRowSchema(Schema):
+    module_id: int
+    module_name: str
+    dir_path: str
+    total_commits: int
+    months: List[MonthlyCommitCellSchema]
+
+class CommitHeatmapSchema(Schema):
+    engineer_id: int
+    engineer_name: str
+    github_login: str
+    repo: str
+    months_requested: int
+    max_month_total: int
+    modules: List[ModuleHeatmapRowSchema]
+
+@router.get(
+    "/engineers/{engineer_id}/commit-heatmap",
+    response=CommitHeatmapSchema,
+)
+def get_commit_heatmap(request, engineer_id: int, repo_id: int, months: int = 12, top_k: int = 10):
+    """Returns per-module monthly commit counts + percentages for the IC heatmap."""
+
+    # 1. Look up engineer and repo
+    engineer = Engineer.objects.get(id=engineer_id)
+    repo = Repo.objects.get(id=repo_id)
+
+    # 2. Derive GitHub login and author identifier
+    #    GitHub commits API ?author= accepts both usernames and emails.
+    #    Use the engineer's email for the API call (most reliable).
+    #    For display, try to extract a GitHub username from noreply emails.
+    email = engineer.email
+    github_author = email  # use email for GitHub API query
+    if email.endswith("@users.noreply.github.com"):
+        github_login = email.split("@")[0]
+    else:
+        github_login = engineer.name  # fallback to display name
+
+    # 3. Compute date range
+    now = datetime.now(timezone.utc)
+    since = now - relativedelta(months=months)
+
+    # 4. Build the full month key list (gap-free)
+    month_keys = []
+    cursor = since.replace(day=1)
+    end = now.replace(day=1)
+    while cursor <= end:
+        month_keys.append(cursor.strftime("%Y-%m"))
+        cursor += relativedelta(months=1)
+
+    # 5. Discover top modules this engineer contributed to (ranked by lines owned)
+    top_module_ids = list(
+        ModuleOwnershipMetric.objects
+        .filter(engineer_id=engineer_id, module__repo_id=repo_id, type='WROTE')
+        .order_by('-lines_owned')
+        .values_list('module_id', flat=True)
+        [:top_k]
+    )
+    target_modules = Module.objects.filter(id__in=top_module_ids).order_by('dir_path')
+
+    # 6. For each module, fetch commits from GitHub filtered by path
+    client = GitHubClient()
+    module_data = []  # list of (module_obj, {month_key: count}, total_commits)
+
+    for mod in target_modules:
+        path_filter = mod.dir_path if mod.dir_path else None
+        commits = client.get_commits_by_author(
+            owner=repo.owner,
+            repo=repo.name,
+            author=github_author,
+            since=since,
+            until=now,
+            path=path_filter,
+        )
+
+        # Group commits by month
+        monthly_counts = defaultdict(int)
+        for c in commits:
+            commit_date = datetime.fromisoformat(c["date"].replace("Z", "+00:00"))
+            month_key = commit_date.strftime("%Y-%m")
+            monthly_counts[month_key] += 1
+
+        module_data.append((mod, dict(monthly_counts), len(commits)))
+
+    # 7. Calculate percentages
+    #    Step A: For each month, sum commits across ALL modules
+    month_totals = defaultdict(int)
+    for mod, monthly_counts, _ in module_data:
+        for mk in month_keys:
+            month_totals[mk] += monthly_counts.get(mk, 0)
+
+    #    Step B: Find the max month total (this is the 100% reference)
+    max_month_total = max(month_totals.values()) if month_totals else 0
+
+    #    Step C: Build the response with percentages per cell
+    modules_response = []
+    for mod, monthly_counts, total in module_data:
+        cells = []
+        for mk in month_keys:
+            count = monthly_counts.get(mk, 0)
+            pct = (count / max_month_total * 100) if max_month_total > 0 else 0.0
+            cells.append({
+                "month": mk,
+                "commit_count": count,
+                "percentage": round(pct, 1),
+            })
+        modules_response.append({
+            "module_id": mod.id,
+            "module_name": mod.name or "ROOT",
+            "dir_path": mod.dir_path or "",
+            "total_commits": total,
+            "months": cells,
+        })
+
+    return {
+        "engineer_id": engineer.id,
+        "engineer_name": engineer.name,
+        "github_login": github_login,
+        "repo": f"{repo.owner}/{repo.name}",
+        "months_requested": months,
+        "max_month_total": max_month_total,
+        "modules": modules_response,
     }

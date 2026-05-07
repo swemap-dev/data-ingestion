@@ -146,6 +146,62 @@ class GitHubClient:
 
 
 
+    def get_commits_by_author(
+        self, owner: str, repo: str, author: str,
+        since: datetime = None, until: datetime = None,
+        path: str = None,
+    ) -> list:
+        """Fetch all commits by a specific author using the REST API.
+
+        Args:
+            owner: Repository owner (e.g. 'conda')
+            repo: Repository name (e.g. 'conda')
+            author: GitHub username or email of the committer
+            since: Only commits after this date (ISO 8601)
+            until: Only commits before this date (ISO 8601)
+            path: Only commits containing this file/directory path
+
+        Returns:
+            List of dicts with keys: sha, date (ISO string), message
+        """
+        rest_url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+        params = {
+            "author": author,
+            "per_page": 100,
+        }
+        if since:
+            params["since"] = since.isoformat()
+        if until:
+            params["until"] = until.isoformat()
+        if path:
+            params["path"] = path
+
+        all_commits = []
+        page = 1
+
+        while True:
+            params["page"] = page
+            response = self.session.get(rest_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                break
+
+            for c in data:
+                all_commits.append({
+                    "sha": c["sha"],
+                    "date": c["commit"]["author"]["date"],
+                    "message": c["commit"]["message"][:200],
+                })
+
+            if len(data) < 100:
+                break
+            page += 1
+
+        return all_commits
+
+
 if __name__ == "__main__":
     from datetime import timedelta, timezone
 

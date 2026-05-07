@@ -94,6 +94,11 @@ class Module(models.Model):
     last_update = models.DateTimeField(null=True, blank=True)
     recs = models.JSONField(null=True, blank=True)
 
+    # Manual Role Assignments
+    assigned_designer = models.ForeignKey(Engineer, on_delete=models.SET_NULL, null=True, blank=True, related_name='designed_modules')
+    assigned_writer = models.ForeignKey(Engineer, on_delete=models.SET_NULL, null=True, blank=True, related_name='written_modules')
+    assigned_reviewer = models.ForeignKey(Engineer, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_modules')
+
     class Meta:
         db_table = 'modules'
         indexes = [
@@ -104,6 +109,16 @@ class Module(models.Model):
 
     def __str__(self):
         return self.name if self.name else "Unnamed Module"
+
+class ModuleRoleAssignment(models.Model):
+    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='role_assignments')
+    role = models.CharField(max_length=50) # e.g., 'DESIGNER', 'WRITER', 'REVIEWER'
+    engineer = models.ForeignKey(Engineer, on_delete=models.CASCADE)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'module_role_assignments'
+        managed = True
 
 class File(models.Model):
     module_id = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='files', db_column='module_id')
