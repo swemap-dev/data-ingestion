@@ -115,8 +115,23 @@ def calculate_structural_hubs(repo_id: int):
     # Pre-pass: sync loc_count from ast_summary
     for f in files:
         ast_info = f.ast_summary or {}
-        f.loc_count = ast_info.get("loc", f.line_count or 0)
-    File.objects.bulk_update(files, ['loc_count'])
+        if isinstance(ast_info, str):
+            try:
+                ast_info = json.loads(ast_info)
+            except Exception as e:
+                logger.error(f"Failed to parse ast_summary string for {f.file_path}: {e}")
+                ast_info = {}
+        
+        try:
+            f.loc_count = ast_info.get("loc", f.line_count or 0)
+        except AttributeError as e:
+            logger.error(f"AttributeError reading loc for {f.file_path} (ast_info type: {type(ast_info)}): {e}")
+            f.loc_count = f.line_count or 0
+
+    try:
+        File.objects.bulk_update(files, ['loc_count'])
+    except Exception as e:
+        logger.error(f"Failed to bulk_update loc_count: {e}")
 
     # ── 1. Build global import graph ─────────────────────────────────
     file_map = {f.file_path: f for f in files}
@@ -127,6 +142,11 @@ def calculate_structural_hubs(repo_id: int):
 
     for f in files:
         ast_info = f.ast_summary or {}
+        if isinstance(ast_info, str):
+            try:
+                ast_info = json.loads(ast_info)
+            except:
+                ast_info = {}
         for imp in ast_info.get("imports", []):
             matched = _resolve_import(imp, file_paths, file_map)
             if matched and matched.id != f.id:

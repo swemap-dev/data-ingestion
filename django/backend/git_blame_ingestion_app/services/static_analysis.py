@@ -17,11 +17,19 @@ def _walk_python_imports(node: Node, imports: set):
             if child.type == 'dotted_name':
                 imports.add(child.text.decode('utf-8'))
     elif node.type == 'import_from_statement':
-        # module_name is typically the first dotted_name or relative_import
-        for child in node.children:
-            if child.type in ('dotted_name', 'relative_import'):
-                imports.add(child.text.decode('utf-8'))
-                break # only want the from part, not what's imported
+        # In tree-sitter-python, a relative import looks like:
+        # relative_import ('.core.link')
+        # OR it has separate import_prefix ('.') and dotted_name ('core.link') inside it.
+        # It's safest to look for 'module_name' child or extract text from relative_import / dotted_name before 'import' keyword.
+        module_name_node = node.child_by_field_name('module_name')
+        if module_name_node:
+            imports.add(module_name_node.text.decode('utf-8'))
+        else:
+            # Fallback for older tree-sitter-python versions
+            for child in node.children:
+                if child.type in ('dotted_name', 'relative_import'):
+                    imports.add(child.text.decode('utf-8'))
+                    break # only want the from part, not what's imported
 
     for child in node.children:
         _walk_python_imports(child, imports)
