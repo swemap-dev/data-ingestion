@@ -100,8 +100,16 @@ def initialize(repo_url, ref=None):
         ref = ref or repo_meta.default_branch
 
         commit_sha, _, _ = service._get_tree_sha(owner, name, ref)
-        file_paths = service.get_all_file_paths(owner, name, ref)
-        logger.info(f"Found {len(file_paths)} files in {owner}/{name}")
+        all_file_paths = service.get_all_file_paths(owner, name, ref)
+        
+        # Filter out data files and only process source code to drastically speed up ingestion
+        from risk_dashboard.services.brain_file_analysis import SOURCE_CODE_EXTENSIONS
+        file_paths = [
+            f for f in all_file_paths 
+            if any(f.endswith(ext) for ext in SOURCE_CODE_EXTENSIONS)
+        ]
+        
+        logger.info(f"Found {len(file_paths)} source files (out of {len(all_file_paths)} total) in {owner}/{name}")
         
         # Pre-create Repo and Modules
         from .models import Repo
