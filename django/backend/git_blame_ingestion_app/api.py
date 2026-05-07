@@ -40,6 +40,17 @@ def reset_celery_queue(request):
     purged_count = current_app.control.purge()
     return {"status": "success", "purged_tasks": purged_count}
 
+@api.get("/debug-finalize/{repo_id}")
+def debug_finalize(request, repo_id: int):
+    """Synchronously runs finalize_repo_ingestion to catch and display any hidden crashes."""
+    import traceback
+    from .tasks import finalize_repo_ingestion
+    try:
+        finalize_repo_ingestion(repo_id)
+        return {"status": "success", "message": "Finalization completed without errors."}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+
 class ModuleSchema(Schema):
     module_id: int
     module_name: str

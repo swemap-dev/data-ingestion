@@ -139,10 +139,14 @@ def calculate_structural_hubs(repo_id: int):
         for fid, imp_map in importers.items()
         if imp_map
     }
-    debug_path = os.path.join(settings.BASE_DIR, "..", "..", "data", "debug_importers.json")
-    with open(debug_path, "w") as fp:
-        json.dump(debug_importers, fp, indent=2, sort_keys=True)
-    logger.info(f"Wrote importer debug dump to {debug_path}")
+    try:
+        debug_path = os.path.join(settings.BASE_DIR, "..", "..", "data", "debug_importers.json")
+        os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+        with open(debug_path, "w") as fp:
+            json.dump(debug_importers, fp, indent=2, sort_keys=True)
+        logger.info(f"Wrote importer debug dump to {debug_path}")
+    except Exception as e:
+        logger.warning(f"Could not write debug_importers.json: {e}")
 
     # Compute raw N_F (total in-degree) for every file
     for f in files:

@@ -4,9 +4,9 @@ on:
   schedule:
     # GitHub Actions uses UTC time. 
     # America/New_York is UTC-4 in summer (EDT) and UTC-5 in winter (EST).
-    # We ping at 45 and 55 minutes past 3 AM and 4 AM UTC.
-    # This guarantees the server is woken up right before midnight New York time all year round!
-    - cron: '45,55 3,4 * * *'
+    # We ping at 15, 25, 45, and 55 minutes past 3 AM and 4 AM UTC.
+    # This guarantees the server is woken up right before 11:30 PM and Midnight New York time all year round!
+    - cron: '15,25,45,55 3,4 * * *'
   
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
