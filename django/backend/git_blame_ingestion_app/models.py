@@ -94,6 +94,8 @@ class Module(models.Model):
     time_created = models.DateTimeField(auto_now_add=True)
     last_update = models.DateTimeField(null=True, blank=True)
     recs = models.JSONField(null=True, blank=True)
+    # Manually-assigned designer name (free-text). Null/empty means unassigned.
+    designer_name = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         db_table = 'modules'
