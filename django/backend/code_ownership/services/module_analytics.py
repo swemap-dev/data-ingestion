@@ -207,5 +207,12 @@ def set_module_role(module_id: int, role: str, name: str = None) -> Dict[str, An
     }
 
 def set_module_designer(module_id: int, designer_name: str = None) -> Dict[str, Any]:
-    """Backward compatibility wrapper for designer updates."""
-    return set_module_role(module_id, 'DESIGNER', designer_name)
+    """Backward compatibility wrapper for designer updates. Returns shape expected by ModuleDesignerSchema."""
+    result = set_module_role(module_id, 'DESIGNER', designer_name)
+    if "error" in result:
+        return result
+    return {
+        "module_id": result["module_id"],
+        "name": result["name"],
+        "designer": result["name"],  # ModuleDesignerSchema requires this field
+    }
