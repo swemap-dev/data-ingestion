@@ -127,20 +127,26 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
     services_list = []
     
     for module in modules:
-        # Get ownership stats for each role
-        # We take the top 1 (index 0) if available
-        
         # 1. Writer
-        writers = get_module_writers(module.id)
-        writer_name = writers[0]['engineer_name'] if writers else "Unassigned"
+        if module.writer_name:
+            writer_name = module.writer_name
+        else:
+            writers = get_module_writers(module.id)
+            writer_name = writers[0]['engineer_name'] if writers else "Unassigned"
         
         # 2. Reviewer
-        # TODO: change to get_module_reviewers
-        reviewers = list_module_reviewers_random(module.id)
-        reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
+        if module.reviewer_name:
+            reviewer_name = module.reviewer_name
+        else:
+            # TODO: change to get_module_reviewers
+            reviewers = list_module_reviewers_random(module.id)
+            reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
         
-        # 3. Designer (manual assignment stored on Module.designer_name)
-        designer_name = module.designer_name if module.designer_name else "Unassigned"
+        # 3. Designer
+        if module.designer_name:
+            designer_name = module.designer_name
+        else:
+            designer_name = "Unassigned"
         
         services_list.append({
             "module_id": module.id,
@@ -158,24 +164,48 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
     }
 
 
-def set_module_designer(module_id: int, designer_name: str = None) -> Dict[str, Any]:
+def set_module_role(module_id: int, role: str, name: str = None) -> Dict[str, Any]:
     """
-    Updates the manually-assigned designer for a module.
-    Pass None or an empty string to clear the assignment (back to "Unassigned").
+    Updates the manually-assigned role (DESIGNER, WRITER, REVIEWER) for a module.
+    Logs the change to ModuleRoleAssignment for history tracking.
     """
-    from git_blame_ingestion_app.models import Module
+    from git_blame_ingestion_app.models import Module, ModuleRoleAssignment
+    
+    role = role.upper()
+    if role not in ['DESIGNER', 'WRITER', 'REVIEWER']:
+        return {"error": f"Invalid role: {role}"}
 
     try:
         module = Module.objects.get(id=module_id)
     except Module.DoesNotExist:
         return {"error": "Module not found"}
 
-    cleaned = (designer_name or "").strip()
-    module.designer_name = cleaned if cleaned else None
-    module.save(update_fields=["designer_name"])
+    cleaned_name = (name or "").strip()
+    value_to_save = cleaned_name if cleaned_name else None
+    
+    if role == 'DESIGNER':
+        module.designer_name = value_to_save
+    elif role == 'WRITER':
+        module.writer_name = value_to_save
+    elif role == 'REVIEWER':
+        module.reviewer_name = value_to_save
+        
+    module.save()
+
+    # Log to history if a name was actually assigned (not cleared)
+    if value_to_save:
+        ModuleRoleAssignment.objects.create(
+            module=module,
+            role=role,
+            engineer_name=value_to_save
+        )
 
     return {
         "module_id": module.id,
-        "name": module.name,
-        "designer": module.designer_name if module.designer_name else "Unassigned",
+        "role": role,
+        "name": value_to_save or "Unassigned"
     }
+
+def set_module_designer(module_id: int, designer_name: str = None) -> Dict[str, Any]:
+    """Backward compatibility wrapper for designer updates."""
+    return set_module_role(module_id, 'DESIGNER', designer_name)

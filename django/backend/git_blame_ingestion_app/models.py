@@ -94,8 +94,10 @@ class Module(models.Model):
     time_created = models.DateTimeField(auto_now_add=True)
     last_update = models.DateTimeField(null=True, blank=True)
     recs = models.JSONField(null=True, blank=True)
-    # Manually-assigned designer name (free-text). Null/empty means unassigned.
+    # Manually-assigned names (free-text). Null/empty means unassigned.
     designer_name = models.CharField(max_length=255, null=True, blank=True)
+    writer_name = models.CharField(max_length=255, null=True, blank=True)
+    reviewer_name = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         db_table = 'modules'
@@ -107,6 +109,16 @@ class Module(models.Model):
 
     def __str__(self):
         return self.name if self.name else "Unnamed Module"
+
+class ModuleRoleAssignment(models.Model):
+    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='role_assignments')
+    role = models.CharField(max_length=50) # 'DESIGNER', 'WRITER', 'REVIEWER'
+    engineer_name = models.CharField(max_length=255)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'module_role_assignments'
+        managed = True
 
 class File(models.Model):
     module_id = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='files', db_column='module_id')
