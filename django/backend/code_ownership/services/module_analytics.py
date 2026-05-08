@@ -115,7 +115,7 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
     Returns a high-level overview of the repository's modules ('services')
     and their key engineering owners.
     """
-    from git_blame_ingestion_app.models import Repo, Module, InteractionType
+    from git_blame_ingestion_app.models import Repo, Module
     
     try:
         repo = Repo.objects.get(id=repo_id)
@@ -139,12 +139,11 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
         reviewers = list_module_reviewers_random(module.id)
         reviewer_name = reviewers[0]['engineer_name'] if reviewers else "Unassigned"
         
-        # 3. Designer
-        # Checking for explicit DESIGNED interaction
-        designers = _get_module_ownership_stats(module.id, InteractionType.DESIGNED)
-        designer_name = designers[0]['engineer_name'] if designers else "Unassigned"
+        # 3. Designer (manual assignment stored on Module.designer_name)
+        designer_name = module.designer_name if module.designer_name else "Unassigned"
         
         services_list.append({
+            "module_id": module.id,
             "name": module.name,
             "designer": designer_name,
             "writer": writer_name,
@@ -156,4 +155,27 @@ def get_repo_overview(repo_id: int) -> Dict[str, Any]:
             "name": repo.name,
             "services": services_list
         }
+    }
+
+
+def set_module_designer(module_id: int, designer_name: str = None) -> Dict[str, Any]:
+    """
+    Updates the manually-assigned designer for a module.
+    Pass None or an empty string to clear the assignment (back to "Unassigned").
+    """
+    from git_blame_ingestion_app.models import Module
+
+    try:
+        module = Module.objects.get(id=module_id)
+    except Module.DoesNotExist:
+        return {"error": "Module not found"}
+
+    cleaned = (designer_name or "").strip()
+    module.designer_name = cleaned if cleaned else None
+    module.save(update_fields=["designer_name"])
+
+    return {
+        "module_id": module.id,
+        "name": module.name,
+        "designer": module.designer_name if module.designer_name else "Unassigned",
     }
