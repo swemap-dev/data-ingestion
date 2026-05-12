@@ -1,0 +1,190 @@
+{
+  "engineer_id": 3424,
+  "repo_root": "/Users/justinchung/Code/SWEMAP/conda",
+  "total_functions_analyzed": 814,
+  "pool": "max",
+  "skills": [
+    {
+      "score": 0.5966,
+      "uri": "pycosat / SAT Solving",
+      "label": "pycosat / SAT Solving",
+      "chain": [
+        {
+          "uri": "pycosat / SAT Solving",
+          "label": "pycosat / SAT Solving"
+        },
+        {
+          "uri": "Constraint Satisfaction",
+          "label": "Constraint Satisfaction"
+        },
+        {
+          "uri": "Algorithm Design",
+          "label": "Algorithm Design"
+        }
+      ]
+    },
+    {
+      "score": 0.5576,
+      "uri": "hashlib",
+      "label": "hashlib",
+      "chain": [
+        {
+          "uri": "hashlib",
+          "label": "hashlib"
+        },
+        {
+          "uri": "Security & Integrity",
+          "label": "Security & Integrity"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5404,
+      "uri": "Shell Hook Emulation",
+      "label": "Shell Hook Emulation",
+      "chain": [
+        {
+          "uri": "Shell Hook Emulation",
+          "label": "Shell Hook Emulation"
+        },
+        {
+          "uri": "Process Management",
+          "label": "Process Management"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5271,
+      "uri": "argparse",
+      "label": "argparse",
+      "chain": [
+        {
+          "uri": "argparse",
+          "label": "argparse"
+        },
+        {
+          "uri": "Command Line Interfaces (CLI)",
+          "label": "Command Line Interfaces (CLI)"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5257,
+      "uri": "tarfile / zipfile / zstandard",
+      "label": "tarfile / zipfile / zstandard",
+      "chain": [
+        {
+          "uri": "tarfile / zipfile / zstandard",
+          "label": "tarfile / zipfile / zstandard"
+        },
+        {
+          "uri": "Data Compression & Extraction",
+          "label": "Data Compression & Extraction"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5162,
+      "uri": "shutil / os.path",
+      "label": "shutil / os.path",
+      "chain": [
+        {
+          "uri": "shutil / os.path",
+          "label": "shutil / os.path"
+        },
+        {
+          "uri": "File System Operations",
+          "label": "File System Operations"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5111,
+      "uri": "os.link / os.symlink",
+      "label": "os.link / os.symlink",
+      "chain": [
+        {
+          "uri": "os.link / os.symlink",
+          "label": "os.link / os.symlink"
+        },
+        {
+          "uri": "File System Operations",
+          "label": "File System Operations"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.504,
+      "uri": "Extensibility & Architecture",
+      "label": "Extensibility & Architecture",
+      "chain": [
+        {
+          "uri": "Extensibility & Architecture",
+          "label": "Extensibility & Architecture"
+        },
+        {
+          "uri": "Backend Development",
+          "label": "Backend Development"
+        }
+      ]
+    },
+    {
+      "score": 0.5021,
+      "uri": "Command Line Interfaces (CLI)",
+      "label": "Command Line Interfaces (CLI)",
+      "chain": [
+        {
+          "uri": "Command Line Interfaces (CLI)",
+          "label": "Command Line Interfaces (CLI)"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.4987,
+      "uri": "logging",
+      "label": "logging",
+      "chain": [
+        {
+          "uri": "logging",
+          "label": "logging"
+        },
+        {
+          "uri": "State Logging & Telemetry",
+          "label": "State Logging & Telemetry"
+        },
+        {
+          "uri": "Backend Development",
+          "label": "Backend Development"
+        }
+      ]
+    }
+  ]
+}

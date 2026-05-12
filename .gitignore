@@ -22,7 +22,12 @@ scripts/
 legacy/
 .claude/
 data/
+
 playground/
+# But keep the ones in skill_playground/                              
+!skill_playground/**/*.json                                           
+!skill_playground/*.json
+
 data/
 **/artifacts/*.pickle
 **/artifacts/*.index

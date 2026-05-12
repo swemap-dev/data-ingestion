@@ -1,0 +1,194 @@
+{
+  "engineer_id": 3424,
+  "repo_root": "/Users/justinchung/Code/SWEMAP/conda",
+  "total_functions_analyzed": 2911,
+  "pool": "max",
+  "skills": [
+    {
+      "score": 0.7176,
+      "uri": "Topological Sorting",
+      "label": "Topological Sorting",
+      "chain": [
+        {
+          "uri": "Topological Sorting",
+          "label": "Topological Sorting"
+        },
+        {
+          "uri": "Graph Theory",
+          "label": "Graph Theory"
+        },
+        {
+          "uri": "Algorithm Design",
+          "label": "Algorithm Design"
+        }
+      ]
+    },
+    {
+      "score": 0.7043,
+      "uri": "os.link / os.symlink",
+      "label": "os.link / os.symlink",
+      "chain": [
+        {
+          "uri": "os.link / os.symlink",
+          "label": "os.link / os.symlink"
+        },
+        {
+          "uri": "File System Operations",
+          "label": "File System Operations"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.6578,
+      "uri": "hashlib",
+      "label": "hashlib",
+      "chain": [
+        {
+          "uri": "hashlib",
+          "label": "hashlib"
+        },
+        {
+          "uri": "Security & Integrity",
+          "label": "Security & Integrity"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.6516,
+      "uri": "pycosat / SAT Solving",
+      "label": "pycosat / SAT Solving",
+      "chain": [
+        {
+          "uri": "pycosat / SAT Solving",
+          "label": "pycosat / SAT Solving"
+        },
+        {
+          "uri": "Constraint Satisfaction",
+          "label": "Constraint Satisfaction"
+        },
+        {
+          "uri": "Algorithm Design",
+          "label": "Algorithm Design"
+        }
+      ]
+    },
+    {
+      "score": 0.6306,
+      "uri": "argparse",
+      "label": "argparse",
+      "chain": [
+        {
+          "uri": "argparse",
+          "label": "argparse"
+        },
+        {
+          "uri": "Command Line Interfaces (CLI)",
+          "label": "Command Line Interfaces (CLI)"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5926,
+      "uri": "Semantic Versioning",
+      "label": "Semantic Versioning",
+      "chain": [
+        {
+          "uri": "Semantic Versioning",
+          "label": "Semantic Versioning"
+        },
+        {
+          "uri": "Lexical Parsing",
+          "label": "Lexical Parsing"
+        },
+        {
+          "uri": "Algorithm Design",
+          "label": "Algorithm Design"
+        }
+      ]
+    },
+    {
+      "score": 0.5882,
+      "uri": "Command Line Interfaces (CLI)",
+      "label": "Command Line Interfaces (CLI)",
+      "chain": [
+        {
+          "uri": "Command Line Interfaces (CLI)",
+          "label": "Command Line Interfaces (CLI)"
+        },
+        {
+          "uri": "Systems Programming",
+          "label": "Systems Programming"
+        }
+      ]
+    },
+    {
+      "score": 0.5645,
+      "uri": "pytest",
+      "label": "pytest",
+      "chain": [
+        {
+          "uri": "pytest",
+          "label": "pytest"
+        },
+        {
+          "uri": "Testing Frameworks",
+          "label": "Testing Frameworks"
+        },
+        {
+          "uri": "Quality Assurance & Testing",
+          "label": "Quality Assurance & Testing"
+        }
+      ]
+    },
+    {
+      "score": 0.5502,
+      "uri": "TLS / Proxy Configuration",
+      "label": "TLS / Proxy Configuration",
+      "chain": [
+        {
+          "uri": "TLS / Proxy Configuration",
+          "label": "TLS / Proxy Configuration"
+        },
+        {
+          "uri": "Network Communication",
+          "label": "Network Communication"
+        },
+        {
+          "uri": "Backend Development",
+          "label": "Backend Development"
+        }
+      ]
+    },
+    {
+      "score": 0.5461,
+      "uri": "unittest.mock",
+      "label": "unittest.mock",
+      "chain": [
+        {
+          "uri": "unittest.mock",
+          "label": "unittest.mock"
+        },
+        {
+          "uri": "Mocking & Emulation",
+          "label": "Mocking & Emulation"
+        },
+        {
+          "uri": "Quality Assurance & Testing",
+          "label": "Quality Assurance & Testing"
+        }
+      ]
+    }
+  ]
+}

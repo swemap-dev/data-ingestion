@@ -14,6 +14,7 @@ SOURCE_CODE_EXTENSIONS = {
     '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp',
     '.cs', '.swift', '.scala',
     '.php', '.lua', '.r',
+    '.bat', '.sh'
 }
 
 

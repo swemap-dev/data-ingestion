@@ -1,0 +1,633 @@
+{
+  "engineer_id": 3474,
+  "dataset": "swe_anchor",
+  "repo_root": "/Users/justinchung/Code/SWEMAP/conda",
+  "total_functions_analyzed": 1879,
+  "top_k": 10,
+  "threshold": 0.4,
+  "decay": 0.5,
+  "roots": [
+    {
+      "name": "Backend & API",
+      "score": 6.0,
+      "children": [
+        {
+          "name": "HTTP Networking",
+          "score": 6.0,
+          "children": [
+            {
+              "name": "requests",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "urllib3",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "aiohttp",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "httpx",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "axios",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "fetch",
+              "score": 4.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "API Development",
+          "score": 1.0,
+          "children": [
+            {
+              "name": "Flask",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Django",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "FastAPI",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Express.js",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Starlette",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Spring Boot",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Middleware & Routing",
+          "score": 3.0,
+          "children": [
+            {
+              "name": "Werkzeug",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "WSGI",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "ASGI",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "Express Router",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Concurrency & Execution",
+      "score": 7.75,
+      "children": [
+        {
+          "name": "Asynchronous Programming",
+          "score": 2.5,
+          "children": [
+            {
+              "name": "asyncio",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "twisted",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "tornado",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "tokio",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Node.js Event Loop",
+              "score": 2.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Multithreading & Parallelism",
+          "score": 5.5,
+          "children": [
+            {
+              "name": "threading",
+              "score": 4.0,
+              "children": []
+            },
+            {
+              "name": "multiprocessing",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "concurrent.futures",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "ThreadPoolExecutor",
+              "score": 2.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Task Queues & Workers",
+          "score": 1.5,
+          "children": [
+            {
+              "name": "Celery",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "RQ",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "RabbitMQ",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Kafka",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "Sidekiq",
+              "score": 2.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Data & Storage",
+      "score": 24.25,
+      "children": [
+        {
+          "name": "Relational Databases & ORMs",
+          "score": 1.5,
+          "children": [
+            {
+              "name": "SQLAlchemy",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "Django ORM",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "psycopg2",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "ActiveRecord",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "Hibernate",
+              "score": 1.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "NoSQL & Document Stores",
+          "score": 1.0,
+          "children": [
+            {
+              "name": "Redis",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "MongoDB",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "pymongo",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "memcached",
+              "score": 6.0,
+              "children": []
+            },
+            {
+              "name": "DynamoDB",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Data Serialization & Validation",
+          "score": 16.5,
+          "children": [
+            {
+              "name": "json",
+              "score": 7.0,
+              "children": []
+            },
+            {
+              "name": "yaml",
+              "score": 10.0,
+              "children": []
+            },
+            {
+              "name": "pydantic",
+              "score": 9.0,
+              "children": []
+            },
+            {
+              "name": "marshmallow",
+              "score": 7.0,
+              "children": []
+            },
+            {
+              "name": "protobuf",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "msgpack",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Caching Strategies",
+          "score": 23.5,
+          "children": [
+            {
+              "name": "functools.lru_cache",
+              "score": 10.0,
+              "children": []
+            },
+            {
+              "name": "Redis cache",
+              "score": 11.0,
+              "children": []
+            },
+            {
+              "name": "memcached",
+              "score": 6.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Systems Programming",
+      "score": 52.0,
+      "children": [
+        {
+          "name": "Process Management",
+          "score": 6.5,
+          "children": [
+            {
+              "name": "subprocess",
+              "score": 7.0,
+              "children": []
+            },
+            {
+              "name": "os.fork",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "Popen",
+              "score": 3.0,
+              "children": []
+            },
+            {
+              "name": "signal",
+              "score": 1.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "File System & Disk IO",
+          "score": 53.5,
+          "children": [
+            {
+              "name": "os.path",
+              "score": 42.0,
+              "children": []
+            },
+            {
+              "name": "pathlib",
+              "score": 20.0,
+              "children": []
+            },
+            {
+              "name": "shutil",
+              "score": 10.0,
+              "children": []
+            },
+            {
+              "name": "tempfile",
+              "score": 25.0,
+              "children": []
+            },
+            {
+              "name": "aiofiles",
+              "score": 6.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Shell & CLI Applications",
+          "score": 40.0,
+          "children": [
+            {
+              "name": "argparse",
+              "score": 19.0,
+              "children": []
+            },
+            {
+              "name": "click",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "typer",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "optparse",
+              "score": 6.0,
+              "children": []
+            },
+            {
+              "name": "sys.argv",
+              "score": 11.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quality Assurance",
+      "score": 98.75,
+      "children": [
+        {
+          "name": "Unit & Integration Testing",
+          "score": 138.5,
+          "children": [
+            {
+              "name": "pytest",
+              "score": 158.0,
+              "children": []
+            },
+            {
+              "name": "unittest",
+              "score": 25.0,
+              "children": []
+            },
+            {
+              "name": "jest",
+              "score": 25.0,
+              "children": []
+            },
+            {
+              "name": "mocha",
+              "score": 20.0,
+              "children": []
+            },
+            {
+              "name": "junit",
+              "score": 15.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Mocking & Stubbing",
+          "score": 59.0,
+          "children": [
+            {
+              "name": "unittest.mock",
+              "score": 23.0,
+              "children": []
+            },
+            {
+              "name": "responses",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "sinon",
+              "score": 4.0,
+              "children": []
+            },
+            {
+              "name": "pytest-mock",
+              "score": 54.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Security & Cryptography",
+      "score": 11.5,
+      "children": [
+        {
+          "name": "Hashing & Encryption",
+          "score": 14.5,
+          "children": [
+            {
+              "name": "hashlib",
+              "score": 9.0,
+              "children": []
+            },
+            {
+              "name": "cryptography",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "PyNaCl",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "bcrypt",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "rsa",
+              "score": 2.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Authentication & Authorization",
+          "score": 6.5,
+          "children": [
+            {
+              "name": "PyJWT",
+              "score": 1.0,
+              "children": []
+            },
+            {
+              "name": "OAuth",
+              "score": 3.0,
+              "children": []
+            },
+            {
+              "name": "passport.js",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "session",
+              "score": 3.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Algorithms & Logic",
+      "score": 27.75,
+      "children": [
+        {
+          "name": "Constraint Satisfaction & Optimization",
+          "score": 28.5,
+          "children": [
+            {
+              "name": "pycosat",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "z3",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "scipy.optimize",
+              "score": 0.0,
+              "children": []
+            },
+            {
+              "name": "SAT Solvers",
+              "score": 25.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Graph Theory & Trees",
+          "score": 10.5,
+          "children": [
+            {
+              "name": "networkx",
+              "score": 2.0,
+              "children": []
+            },
+            {
+              "name": "topological sort",
+              "score": 3.0,
+              "children": []
+            },
+            {
+              "name": "tree traversal",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Text Processing & Regex",
+          "score": 14.5,
+          "children": [
+            {
+              "name": "re",
+              "score": 7.0,
+              "children": []
+            },
+            {
+              "name": "regex",
+              "score": 14.0,
+              "children": []
+            },
+            {
+              "name": "string manipulation",
+              "score": 6.0,
+              "children": []
+            },
+            {
+              "name": "tokenizers",
+              "score": 0.0,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
